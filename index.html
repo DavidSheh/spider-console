@@ -15,6 +15,7 @@
   --ok:#4ade80; --drop:#f87171; --accent:#7dd3fc;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none !important}   /* .bar{display:flex} 会盖掉 UA 的 [hidden]，必须显式压住 */
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);
   font:16px/1.75 -apple-system,BlinkMacSystemFont,"HarmonyOS Sans SC","PingFang SC","Noto Sans SC",sans-serif;
