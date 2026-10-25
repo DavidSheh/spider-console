@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>干货控制台</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#0f1115; --card:#171a21; --card2:#1d2129; --line:#272c36;
+  --fg:#e8eaee; --dim:#9aa3b2; --dim2:#6b7381;
+  --ok:#4ade80; --drop:#f87171; --accent:#7dd3fc;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.75 -apple-system,BlinkMacSystemFont,"HarmonyOS Sans SC","PingFang SC","Noto Sans SC",sans-serif;
+  padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+a{color:var(--accent)}
+header{position:sticky;top:0;z-index:10;background:rgba(15,17,21,.94);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line);
+  padding:calc(8px + env(safe-area-inset-top)) 14px 8px}
+.row{display:flex;align-items:center;gap:10px}
+.title{font-weight:600;font-size:15px;letter-spacing:.02em}
+.grow{flex:1}
+select,button,input{font:inherit;color:var(--fg)}
+select{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:15px}
+button{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:9px 14px;
+  font-size:14px;cursor:pointer;transition:.15s}
+button:active{transform:scale(.97)}
+button.primary{background:#1d4ed8;border-color:#2563eb;font-weight:600}
+button.ghost{background:transparent}
+button:disabled{opacity:.45}
+.sub{color:var(--dim);font-size:12.5px;margin-top:6px}
+.badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.badge.dirty{color:#fbbf24;border-color:#78350f;background:#2a1c05}
+.badge.ok{color:var(--ok);border-color:#14532d;background:#08210f}
+main{padding:14px}
+.person{margin:22px 0 8px;font-size:13px;letter-spacing:.14em;color:var(--dim2);
+  text-transform:uppercase;display:flex;align-items:center;gap:10px}
+.person:after{content:"";flex:1;height:1px;background:var(--line)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 15px;margin:10px 0;
+  transition:.18s}
+.card p{margin:0 0 10px;white-space:pre-wrap;word-break:break-word}
+.card p:last-child{margin-bottom:0}
+.card .quote{color:var(--dim);font-style:italic;font-size:14.5px;border-left:2px solid var(--line);
+  padding-left:10px;margin:10px 0}
+.card blockquote{margin:10px 0;padding:10px 12px;background:var(--card2);border-radius:10px;
+  color:var(--dim);font-size:14.5px;white-space:pre-wrap;word-break:break-word}
+.card .cmts{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
+.card .cmts div{font-size:14.5px;color:var(--dim);margin:6px 0}
+.card .cmts b{color:var(--fg);font-weight:600}
+.card footer{display:flex;align-items:center;gap:10px;margin-top:12px;color:var(--dim2);font-size:12.5px}
+.card footer .drop{margin-left:auto;padding:7px 12px;font-size:13px;border-radius:999px}
+.card.dropped{opacity:.42;filter:saturate(.4)}
+.card.dropped p,.card.dropped blockquote{text-decoration:line-through;text-decoration-color:#7f1d1d}
+.card.dropped .drop{color:var(--drop);border-color:#7f1d1d;background:#241214}
+.card:not(.dropped) .drop{color:var(--ok)}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;gap:10px;align-items:center;
+  padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+  background:rgba(15,17,21,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+.login{max-width:520px;margin:0 auto;padding:24px 18px}
+.login h1{font-size:19px;margin:6px 0 4px}
+.login label{display:block;margin:16px 0 6px;font-size:13px;color:var(--dim)}
+.login input{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:12px;
+  padding:12px 14px;font-size:16px}
+.hint{color:var(--dim2);font-size:12.5px;line-height:1.6;margin-top:8px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom));
+  background:#111827;border:1px solid var(--line);color:var(--fg);padding:10px 16px;border-radius:12px;
+  font-size:14px;z-index:50;opacity:0;pointer-events:none;transition:.2s;max-width:88vw;text-align:center}
+.toast.show{opacity:1}
+.empty{color:var(--dim2);text-align:center;padding:60px 20px}
+</style>
+</head>
+<body>
+<header id="hdr" hidden>
+  <div class="row">
+    <span class="title">干货</span>
+    <select id="dates"></select>
+    <span class="grow"></span>
+    <button class="ghost" id="refresh" title="刷新">↻</button>
+  </div>
+  <div class="row sub">
+    <span id="stat"></span>
+    <span class="grow"></span>
+    <span id="state" class="badge">加载中</span>
+  </div>
+</header>
+
+<main id="main"></main>
+
+<div class="bar" id="bar" hidden>
+  <span id="count" class="sub" style="margin:0"></span>
+  <span class="grow"></span>
+  <button id="queue">投递清洗</button>
+  <button class="primary" id="save">保存</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* 手机端控制台（ADR-0012）—— 私有仓的「读正文 + 剔除非干货」界面。
+ *
+ * 为什么没有后端：Gitee API 带全量 CORS（Access-Control-Allow-Origin: *，预检允许 PUT），
+ * 所以这个页面可以直接读写私有仓；页面本身不含任何内容，公开托管也拿不到数据。
+ * 唯一凭据是用户自己的 Gitee 私人令牌，只存在本机（可选 PIN 加密）。
+ */
+const PROVIDERS = {
+  gitee: {
+    label: 'Gitee 私有仓',
+    base: 'https://gitee.com/api/v5',
+    repo: 'davidsheh/spider',
+    hint: 'Gitee 私人令牌（勾 projects）。注意：它是账号级权限，等于该账号所有仓可读写。',
+  },
+  github: {
+    label: 'GitHub 私有仓（推荐）',
+    base: 'https://api.github.com',
+    repo: 'davidsheh/spider-mobile',
+    hint: 'GitHub fine-grained PAT：只授权这一个仓、只 Contents 读写。Gitee 令牌永不上手机。',
+  },
+};
+const LS = {
+  cfg: 'spider.cfg', auth: 'spider.auth',
+  get feed() { return 'spider.feed.'; },
+};
+
+const $ = s => document.querySelector(s);
+const S = {
+  cfg: { owner: 'davidsheh', repo: 'spider', branch: '', provider: 'gitee' },
+  token: '', pin: null,
+  dates: [], date: '',
+  feed: null, sha: '', keep: new Map(),
+  dirty: false, busy: false, offline: false,
+};
+
+/* ---------------------------------------------------------------- 基础工具 */
+function toast(msg, ms = 2200) {
+  const el = $('#toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.remove('show'), ms);
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function b64enc(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = ''; const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  return btoa(bin);
+}
+function b64dec(b64) {
+  const bin = atob(String(b64).replace(/\s/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ---------------------------------------------------------------- Gitee API */
+function provider() { return PROVIDERS[S.cfg.provider] || PROVIDERS.gitee; }
+function apiUrl(p) {
+  const qs = [];
+  if (S.cfg.provider === 'gitee') qs.push('access_token=' + encodeURIComponent(S.token));
+  if (S.cfg.branch) qs.push('ref=' + encodeURIComponent(S.cfg.branch));
+  return `${provider().base}/repos/${S.cfg.owner}/${S.cfg.repo}/contents/${encodeURI(p)}` + (qs.length ? '?' + qs.join('&') : '');
+}
+function apiHeaders() {
+  if (S.cfg.provider === 'gitee') return {};
+  return { 'Authorization': 'Bearer ' + S.token, 'Accept': 'application/vnd.github+json' };
+}
+
+async function apiGet(path) {
+  const r = await fetch(apiUrl(path), { cache: 'no-store', headers: apiHeaders() });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`读取失败 ${r.status} ${path}`);
+  return r.json();
+}
+async function apiText(path) {
+  const j = await apiGet(path);
+  return j ? b64dec(j.content) : null;
+}
+async function apiPut(path, text, message, sha) {
+  const body = { content: b64enc(text), message };
+  if (sha) body.sha = sha;
+  if (S.cfg.branch) body.branch = S.cfg.branch;
+  if (S.cfg.provider === 'gitee') body.access_token = S.token;
+  const r = await fetch(apiUrl(path), {
+    method: 'PUT', headers: Object.assign({ 'Content-Type': 'application/json' }, apiHeaders()),
+    body: JSON.stringify(body),
+  });
+  if (r.ok) return r.json();
+  if (r.status === 409 || r.status === 422) return { conflict: true };
+  let msg = '';
+  try { msg = (await r.json()).message || ''; } catch (e) { }
+  throw new Error(`写入失败 ${r.status} ${msg}`);
+}
+/** 写入并处理并发：拿到最新 sha 再重试一次（只有手机写 picks.md，冲突概率极低）。 */
+async function putWithRetry(path, build, message) {
+  for (let i = 0; i < 2; i++) {
+    const cur = await apiGet(path);
+    const sha = cur ? cur.sha : '';
+    const res = await apiPut(path, build(cur ? b64dec(cur.content) : ''), message, sha);
+    if (!res.conflict) return res;
+    await sleep(300);
+  }
+  throw new Error('仓库刚被别处改过，刷新后再试');
+}
+
+/* ---------------------------------------------------------------- 令牌存储 */
+async function deriveKey(pin, salt) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function saveAuth(token, pin) {
+  if (!pin) {
+    localStorage.setItem(LS.auth, JSON.stringify({ mode: 'plain', token }));
+    return;
+  }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pin, salt);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(token));
+  localStorage.setItem(LS.auth, JSON.stringify({
+    mode: 'pin', salt: b64enc(String.fromCharCode(...salt)), iv: b64enc(String.fromCharCode(...iv)),
+    ct: b64enc(String.fromCharCode(...new Uint8Array(ct))),
+  }));
+}
+async function loadAuthWithPin(pin) {
+  const a = JSON.parse(localStorage.getItem(LS.auth) || 'null');
+  if (!a || a.mode !== 'pin') throw new Error('没有加密的令牌');
+  const u8 = s => new Uint8Array([...atob(s)].map(c => c.charCodeAt(0)));
+  const key = await deriveKey(pin, u8(a.salt));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u8(a.iv) }, key, u8(a.ct));
+  return new TextDecoder().decode(pt);
+}
+function storedAuth() { try { return JSON.parse(localStorage.getItem(LS.auth) || 'null'); } catch (e) { return null; } }
+
+/* ---------------------------------------------------------------- picks 解析 */
+const RE_ROW = /^- \[([ xX])\] ((?:xq|wb):\S+)/;
+function parsePicks(text) {
+  const keep = new Map();
+  for (const line of (text || '').split('\n')) {
+    const m = line.trim().match(RE_ROW);
+    if (m) keep.set(m[2], m[1].toLowerCase() === 'x');
+  }
+  return keep;
+}
+function buildPicks(day, total) {
+  const now = new Date();
+  const iso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19) + '+08:00';
+  const out = [
+    `# ${day} · 过线 ${countItems()} / 共 ${total} · 默认全保留，取消勾选 = 剔除`,
+    `# confirmed: ${iso}`,
+    '# 只改 [ ] 里的字符；不要删行、不要改 id。手机网页保存时会自动写入 confirmed。',
+    '',
+  ];
+  for (const p of S.feed.people) {
+    for (const it of p.items) {
+      const s = (it.summary || '').replace(/\n/g, ' ').slice(0, 60);
+      out.push(`- [${isKeep(it.id) ? 'x' : ' '}] ${it.id} · ${p.name} · ${it.cat || '09_其他'} · t${it.topic == null ? '-' : it.topic}/s${it.signal == null ? '-' : it.signal} · ${s}`);
+    }
+  }
+  return out.join('\n') + '\n';
+}
+function allItems() { return S.feed ? S.feed.people.flatMap(p => p.items) : []; }
+const isKeep = id => S.keep.get(id) !== false;
+const countItems = () => allItems().length;
+const countKeep = () => allItems().filter(i => isKeep(i.id)).length;
+
+/* ---------------------------------------------------------------- 渲染 */
+function setState(text, cls) {
+  const el = $('#state'); el.textContent = text; el.className = 'badge' + (cls ? ' ' + cls : '');
+}
+function render() {
+  const main = $('#main');
+  if (!S.feed) { main.innerHTML = '<div class="empty">没有内容</div>'; return; }
+  const parts = [];
+  let n = 0;
+  for (const p of S.feed.people) {
+    const items = p.items;
+    if (!items.length) continue;
+    parts.push(`<div class="person">${esc(p.name)}</div>`);
+    for (const it of items) {
+      n++;
+      parts.push(card(it));
+    }
+  }
+  main.innerHTML = parts.join('') || '<div class="empty">这一天没有过线的干货</div>';
+  $('#stat').textContent = `${S.feed.date} · 保留 ${countKeep()} / ${countItems()}`;
+  $('#count').textContent = `${countKeep()} / ${countItems()} 保留`;
+  $('#save').disabled = !S.dirty;
+  setState(S.dirty ? '未保存' : '已同步', S.dirty ? 'dirty' : 'ok');
+}
+function card(it) {
+  const q = (it.quotes || []).map(x => `<div class="quote">${x.nick ? '@' + esc(x.nick) + '：' : ''}${esc(x.text)}</div>`).join('');
+  const chain = it.chain ? `<blockquote>${esc(it.chain)}</blockquote>` : '';
+  const cm = (it.comments || []).length
+    ? `<div class="cmts">${it.comments.map(c => `<div><b>${esc(c.user)}${c.author ? '（作者）' : ''}</b>：${esc(c.text)}</div>`).join('')}</div>`
+    : '';
+  const text = (it.text || '').split(/\n{2,}/).map(t => `<p>${esc(t)}</p>`).join('');
+  return `<article class="card${isKeep(it.id) ? '' : ' dropped'}" data-id="${esc(it.id)}">
+    ${text}${q}${chain}${cm}
+    <footer>
+      <span>${esc(it.time)} · ${esc(it.platform)} · <a href="${esc(it.url)}" target="_blank" rel="noreferrer">原文</a></span>
+      <button class="drop" data-id="${esc(it.id)}">${isKeep(it.id) ? '保留' : '已剔除'}</button>
+    </footer>
+  </article>`;
+}
+/* ---------------------------------------------------------------- 数据加载 */
+async function loadDates() {
+  const arr = await apiGet('daily');
+  S.dates = (arr || []).filter(x => x.type === 'dir' && /^\d{4}-\d{2}-\d{2}$/.test(x.name))
+    .map(x => x.name).sort().reverse();
+  const sel = $('#dates');
+  sel.innerHTML = S.dates.map(d => `<option value="${d}">${d}</option>`).join('') || '<option>无</option>';
+}
+async function loadDay(date) {
+  S.date = date; S.busy = true; setState('加载中');
+  try {
+    let feed = null;
+    try {
+      const j = await apiGet(`daily/${date}/feed.json`);
+      feed = j ? JSON.parse(b64dec(j.content)) : null;
+      if (feed) localStorage.setItem(LS.feed + date, JSON.stringify(feed));
+      S.offline = false;
+    } catch (e) {
+      const cached = localStorage.getItem(LS.feed + date);
+      if (!cached) throw e;
+      feed = JSON.parse(cached); S.offline = true;
+    }
+    if (!feed) { S.feed = null; render(); setState('无数据'); return; }
+    S.feed = feed;
+
+    const pj = await apiGet(`daily/${date}/picks.md`).catch(() => null);
+    S.sha = pj ? pj.sha : '';
+    S.keep = pj ? parsePicks(b64dec(pj.content)) : new Map();
+    for (const it of allItems()) if (!S.keep.has(it.id)) S.keep.set(it.id, true);
+
+    S.dirty = false;
+    render();
+    if (S.offline) setState('离线缓存');
+  } catch (e) {
+    setState('出错'); toast(e.message || String(e), 4000);
+  } finally { S.busy = false; }
+}
+
+/* ---------------------------------------------------------------- 动作 */
+async function save() {
+  if (S.busy) return;
+  S.busy = true; $('#save').disabled = true; setState('保存中');
+  try {
+    const text = buildPicks(S.date, S.feed.total || countItems());
+    const res = await putWithRetry(`daily/${S.date}/picks.md`,
+      () => text, `chore(picks): ${S.date} 手机端确认（保留 ${countKeep()}/${countItems()}）`);
+    S.sha = res.content ? res.content.sha : S.sha;
+    S.dirty = false;
+    render();
+    toast('已保存到仓库');
+  } catch (e) {
+    setState('保存失败', 'dirty');
+    toast(e.message || String(e), 4000);
+  } finally { S.busy = false; }
+}
+
+async function deliver() {
+  if (S.busy) return;
+  if (S.dirty) { toast('先保存，再投递'); return; }
+  S.busy = true; $('#queue').disabled = true;
+  try {
+    const path = 'data/state/clean_queue.json';
+    const cur = await apiGet(path);
+    let list = [];
+    if (cur) { try { list = JSON.parse(b64dec(cur.content)); } catch (e) { list = []; } }
+    if (!Array.isArray(list)) list = [];
+    const seen = new Set(list.map(x => x.id));
+    const now = new Date().toISOString();
+    let added = 0;
+    for (const it of allItems()) {
+      if (!isKeep(it.id) || seen.has(it.id)) continue;
+      list.push({ id: it.id, date: S.date, requested_at: now, status: 'pending' });
+      added++;
+    }
+    if (!added) { toast('没有新的可投递条目'); return; }
+    const text = JSON.stringify(list, null, 2) + '\n';
+    await putWithRetry(path, () => text, `chore(clean): 投递 ${added} 条清洗（${S.date} 手机端）`);
+    toast(`已投递 ${added} 条，桌面下次运行处理`);
+  } catch (e) {
+    toast(e.message || String(e), 4000);
+  } finally { S.busy = false; $('#queue').disabled = false; }
+}
+
+/* ---------------------------------------------------------------- 登录 / 启动 */
+function showLogin(msg) {
+  $('#hdr').hidden = true; $('#bar').hidden = true;
+  $('#main').innerHTML = `
+  <div class="login">
+    <h1>干货控制台</h1>
+    <div class="hint">用你的令牌读取私有仓，令牌只存在这台手机上。</div>
+    ${msg ? `<div class="hint" style="color:#f87171">${esc(msg)}</div>` : ''}
+    <label>数据源</label>
+    <select id="f-provider" style="width:100%">
+      ${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}"${S.cfg.provider === k ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}
+    </select>
+    <div class="hint" id="f-hint">${esc(PROVIDERS[S.cfg.provider || 'gitee'].hint)}</div>
+    <label>仓库（owner/repo）</label>
+    <input id="f-repo" value="${esc(S.cfg.owner + '/' + S.cfg.repo)}" autocapitalize="off" autocorrect="off">
+    <label>令牌</label>
+    <input id="f-token" type="password" placeholder="粘贴令牌" autocapitalize="off" autocorrect="off">
+    <label>PIN（可选：加密保存令牌，每次打开输 4~6 位）</label>
+    <input id="f-pin" type="password" inputmode="numeric" placeholder="留空 = 明文保存在本机">
+    <div style="margin-top:22px"><button class="primary" id="f-go" style="width:100%">进入</button></div>
+    <div class="hint" style="margin-top:18px">
+      令牌单个泄露的代价：Gitee = 整个账号的所有仓；GitHub fine-grained = 只有那一个仓。
+    </div>
+  </div>`;
+  const sel = $('#f-provider');
+  sel.onchange = () => {
+    const pv = PROVIDERS[sel.value];
+    $('#f-hint').textContent = pv.hint;
+    $('#f-repo').value = pv.repo;
+  };
+  $('#f-go').onclick = async () => {
+    const [o, r] = ($('#f-repo').value || '').split('/');
+    if (!o || !r) return toast('仓库格式：owner/repo');
+    S.cfg = { owner: o.trim(), repo: r.trim(), branch: '', provider: $('#f-provider').value };
+    localStorage.setItem(LS.cfg, JSON.stringify(S.cfg));
+    S.token = $('#f-token').value.trim();
+    if (!S.token) return toast('先填令牌');
+    await saveAuth(S.token, $('#f-pin').value.trim());
+    if ($('#f-pin').value.trim()) S.pin = $('#f-pin').value.trim();
+    boot();
+  };
+}
+
+async function promptPin() {
+  $('#hdr').hidden = true; $('#bar').hidden = true;
+  $('#main').innerHTML = `
+  <div class="login">
+    <h1>输入 PIN</h1>
+    <div class="hint">令牌已加密保存在本机。</div>
+    <label>PIN</label>
+    <input id="f-pin" type="password" inputmode="numeric" autofocus>
+    <div style="margin-top:22px"><button class="primary" id="f-go" style="width:100%">解锁</button></div>
+    <div class="hint" style="margin-top:18px"><a href="#" id="f-reset">忘记 PIN / 换令牌</a></div>
+  </div>`;
+  const go = async () => {
+    try { S.token = await loadAuthWithPin($('#f-pin').value.trim()); S.pin = $('#f-pin').value.trim(); }
+    catch (e) { return toast('PIN 不对'); }
+    boot();
+  };
+  $('#f-go').onclick = go;
+  $('#f-pin').onkeydown = e => { if (e.key === 'Enter') go(); };
+  $('#f-reset').onclick = e => { e.preventDefault(); localStorage.removeItem(LS.auth); location.reload(); };
+}
+
+async function boot() {
+  $('#hdr').hidden = false; $('#bar').hidden = false;
+  try {
+    await loadDates();
+    if (!S.dates.length) { setState('没有数据'); $('#main').innerHTML = '<div class="empty">仓库里还没有 daily/</div>'; return; }
+    await loadDay(S.dates[0]);
+  } catch (e) {
+    if (/401|403|404/.test(e.message)) {
+      localStorage.removeItem(LS.auth);
+      showLogin('令牌无效或没有权限');
+    } else toast(e.message || String(e), 4000);
+  }
+}
+
+/* 事件绑定 */
+$('#dates').onchange = e => { if (S.dirty && !confirm('还有未保存的剔除，确定切换？')) { e.target.value = S.date; return; } loadDay(e.target.value); };
+$('#save').onclick = save;
+$('#queue').onclick = deliver;
+$('#refresh').onclick = () => loadDay(S.date);
+$('#main').addEventListener('click', e => {
+  const b = e.target.closest('button.drop');
+  if (!b) return;
+  const id = b.dataset.id;
+  S.keep.set(id, !isKeep(id));
+  S.dirty = true;
+  b.closest('.card').classList.toggle('dropped', !isKeep(id));
+  b.textContent = isKeep(id) ? '保留' : '已剔除';
+  $('#count').textContent = `${countKeep()} / ${countItems()} 保留`;
+  $('#save').disabled = false;
+  setState('未保存', 'dirty');
+});
+window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+/* 启动 */
+(async function start() {
+  try { Object.assign(S.cfg, JSON.parse(localStorage.getItem(LS.cfg) || '{}')); } catch (e) { }
+  const a = storedAuth();
+  if (!a) return showLogin();
+  if (a.mode === 'pin') return promptPin();
+  S.token = a.token;
+  boot();
+})();
+// 只有 https 才注册 SW：用「本地文件直接打开」时（file://）注册必然失败，没必要打扰控制台
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => { });
+}
+</script>
+</body>
+</html>
