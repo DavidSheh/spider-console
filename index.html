@@ -111,7 +111,7 @@ main{max-width:760px;margin:0 auto;padding:8px 12px}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = 'effed4178ec85d25';
+const BUILD_VERSION = 'eba65a52ee91be4c';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -337,20 +337,41 @@ async function apiGet(path) {
   if (!r.ok) throw new Error(`读取失败 ${r.status} ${path}`);
   return r.json();
 }
+// Gitee 的 contents 接口对不存在的路径返回 200 + []（不是 404），目录也是数组。
+// 若把 [] 当文件读，content 就是 undefined，atob('undefined') 会抛
+// "The string to be decoded is not correctly encoded"，并且新增文件再也写不出去。
+function fileEntry(j, path) {
+  if (j == null || Array.isArray(j)) return null; // 缺失（Gitee 的 []）或目录列表，都不是文件。
+  if (typeof j !== 'object') throw new Error(`${path} 返回的不是文件对象`);
+  if (j.type && j.type !== 'file') throw new Error(`${path} 不是普通文件（${j.type}）`);
+  return j;
+}
+function fileText(j, path) {
+  const entry = fileEntry(j, path);
+  if (!entry) return null;
+  if (typeof entry.content !== 'string') throw new Error(`${path} 缺少 content，无法解码（可能超过接口大小限制）`);
+  if (entry.encoding && entry.encoding !== 'base64') throw new Error(`${path} 的编码不是 base64（${entry.encoding}）`);
+  return b64dec(entry.content);
+}
 async function apiPut(path, text, message, sha) {
   const body = { content: b64enc(text), message };
   if (sha) body.sha = sha;
   if (S.cfg.branch) body.branch = S.cfg.branch;
   if (S.cfg.provider === 'gitee') body.access_token = S.token;
-  const r = await fetch(apiUrl(path), { method: 'PUT', headers: Object.assign({ 'Content-Type': 'application/json' }, apiHeaders()), body: JSON.stringify(body) });
+  const send = method => fetch(apiUrl(path), { method, headers: Object.assign({ 'Content-Type': 'application/json' }, apiHeaders()), body: JSON.stringify(body) });
+  // Gitee 新建文件是 POST /contents/{path}，PUT 只用于更新（需 sha）；GitHub 一律 PUT。
+  const create = !sha && S.cfg.provider === 'gitee';
+  let r = await send(create ? 'POST' : 'PUT');
+  if (create && (r.status === 404 || r.status === 405)) r = await send('PUT'); // 没有 POST 路由时退回 PUT。
   if (r.ok) return r.json();
   if (r.status === 409 || r.status === 422) return { conflict: true };
   throw new Error(`写入失败 ${r.status}`);
 }
 async function putWithRetry(path, build, message) {
   for (let i = 0; i < 2; i++) {
-    const cur = await apiGet(path);
-    const res = await apiPut(path, build(cur ? b64dec(cur.content) : ''), message, cur ? cur.sha : '');
+    const cur = fileEntry(await apiGet(path), path);
+    if (cur && !cur.sha) throw new Error(`${path} 远端条目缺少 sha，未覆盖远端`);
+    const res = await apiPut(path, build(cur ? fileText(cur, path) : ''), message, cur ? cur.sha : '');
     if (!res.conflict) return res;
     if (i === 0) await sleep(300);
   }
@@ -630,16 +651,16 @@ async function loadDay(date) {
   reconcilePending(); render(); fillDates();
   try {
     try {
-      const j = await apiGet('data/state/reading_state.json');
-      adoptReading(j ? JSON.parse(b64dec(j.content)) : emptyReading());
+      const text = fileText(await apiGet('data/state/reading_state.json'), 'reading_state.json');
+      adoptReading(text == null ? emptyReading() : JSON.parse(text)); // 文件缺失（含 Gitee 的 []）才算空状态。
     } catch (e) { S.offline = true; toast('阅读状态未取到，继续保留本机状态：' + e.message, 4500); }
     try {
-      const j = await apiGet(`daily/${date}/feed.json`);
-      if (j) S.feed = JSON.parse(b64dec(j.content));
+      const text = fileText(await apiGet(`daily/${date}/feed.json`), `daily/${date}/feed.json`);
+      if (text != null) S.feed = JSON.parse(text);
     } catch (e) { S.offline = true; if (!S.feed) toast('没有该日期离线正文：' + e.message, 4500); }
     try {
-      const j = await apiGet(`daily/${date}/picks.md`);
-      cached.picks = j ? b64dec(j.content) : ''; // 网络错误绝不能被当成远端空 picks。
+      const text = fileText(await apiGet(`daily/${date}/picks.md`), `daily/${date}/picks.md`);
+      cached.picks = text == null ? '' : text; // 网络错误绝不能被当成远端空 picks。
       S.keep = parsePicks(cached.picks);
     } catch (e) { S.offline = true; toast('决策使用本机缓存，改动仍保留', 3500); }
     reconcilePending(); persistLocal();
@@ -689,8 +710,7 @@ async function deliver() {
   S.busy = true; updateStatus();
   try {
     await saveReadingState();
-    const pj = await apiGet(`daily/${S.date}/picks.md`);
-    const text = pj ? b64dec(pj.content) : '';
+    const text = fileText(await apiGet(`daily/${S.date}/picks.md`), `daily/${S.date}/picks.md`) || '';
     S.store.days[S.date].picks = text; S.keep = parsePicks(text); reconcilePending(); persistLocal();
     if (S.dirty || !isConfirmed(text)) throw new Error('最新 picks 尚未确认或与桶状态不一致，请先确认并保存决策');
     const selected = allItems().filter(it => bucketOf(it) === 'good' && S.keep.get(it.id) === true);

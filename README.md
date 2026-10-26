@@ -55,6 +55,18 @@
 - **Gitee**：手机直连主仓，状态与 picks / 队列写入该仓。
 - **GitHub（推荐）**：手机只连私有数据面仓（例如 `davidsheh/spider-mobile`）；桌面 `scripts/mobile_sync.py` 的 pull / push 都会对全局 `reading_state.json` 双向字段合并，不限今天 / 昨天；push 会从 feed 剔除销毁正文。feed 由桌面推送，picks / 清洗队列由桌面拉回。后端 promote 允许人工回捞的 reject，但跳过 state bucket 为 water / destroyed 的条目。
 
+### Gitee contents 接口的两个差异（真机踩过）
+
+1. **不存在的路径返回 `200` + `[]`，不是 `404`**。把 `[]` 当文件读，`content` 就是 `undefined`，`atob('undefined')` 抛
+   `The string to be decoded is not correctly encoded`。因此「文件缺失」必须是 `null` **或**数组（目录列表）。
+   症状：`data/state/reading_state.json` 还没在仓库里时，每次开页都提示「阅读状态未取到」，
+   「确认并保存决策」也必然失败——而且它永远写不出去，形成死锁。
+2. **新建文件用 `POST /contents/{path}`，`PUT` 只用于更新且要带 `sha`**（GitHub 两者都用 `PUT`）。
+   首次写入 `reading_state.json` / `clean_queue.json` 时必须走 `POST`，否则更新接口返回失败。
+
+客户端统一用 `fileEntry()` / `fileText()` 把「缺失」与「文件」分开，并在失败时给出明确错误，
+绝不把 `undefined` / 非 base64 内容交给 `atob`，也绝不把 API 异常当成远端空文件覆盖。
+
 ## 离线与本机隔离
 
 本机 localStorage 以 **provider / owner / repo / branch** 为 scope，保存 feed、picks、全局阅读状态及**每个日期尚未确认保存的选择**。旧版不分仓的 `spider.feed.<date>` 缓存不会自动导入，避免串仓。
