@@ -1,5 +1,5 @@
 /* 仅缓存手机阅读器的静态空壳，绝不缓存 feed / picks / 状态 / API / release.json。 */
-const BUILD_VERSION = 'eba65a52ee91be4c';
+const BUILD_VERSION = 'b3818336e7a0785b';
 const VERSION = typeof BUILD_VERSION === 'string' && /^[0-9a-f]{16}$/.test(BUILD_VERSION) && BUILD_VERSION.length === 16 ? BUILD_VERSION : 'dev';
 const C = 'spider-shell-' + VERSION;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg'];

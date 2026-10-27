@@ -54,6 +54,14 @@ main{max-width:760px;margin:0 auto;padding:8px 12px}
 .card .cmts b{color:var(--fg);font-weight:600}
 .card footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--dim)}
 .card .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.card .author-name{color:var(--fg);font-size:14px;font-weight:700}
+.author-entry{display:block;width:100%;text-align:left;margin:10px 0;padding:14px;font-size:16px}
+.author-entry small{display:block;color:var(--dim);font-size:12px}
+.load-tail{text-align:center;padding:20px 8px;color:var(--dim);font-size:13px}
+.load-tail button{margin:6px}
+.favorite-heading{display:flex;gap:12px;align-items:center;padding:12px 0}
+#dates{max-width:145px}
+#save{white-space:nowrap}
 .card .actions button{padding:8px 10px}
 .card .favorite[aria-pressed="true"]{color:#fbbf24}
 .card .danger{color:#fca5a5}
@@ -63,7 +71,8 @@ main{max-width:760px;margin:0 auto;padding:8px 12px}
 .login label{display:block;margin:16px 0 6px;font-size:13px;color:var(--dim)}
 .login input{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:16px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));background:#111827;border:1px solid var(--line);padding:10px 16px;border-radius:12px;font-size:14px;line-height:1.6;z-index:50;opacity:0;pointer-events:none;transition:.2s;width:max-content;max-width:90vw;text-align:center}
-.toast.show{opacity:1}
+.toast.show{opacity:1;pointer-events:auto}
+.toast button{margin-left:10px}
 .empty{color:var(--dim);text-align:center;padding:60px 20px;font-size:16px}
 @media(max-width:360px){.title{display:none}.card{padding:18px 14px}.tabs button{padding:5px 6px}}
 </style>
@@ -73,18 +82,17 @@ main{max-width:760px;margin:0 auto;padding:8px 12px}
   <div class="header-inner">
     <div class="row">
       <span class="title">阅读</span>
-      <select id="dates" aria-label="阅读日期"></select>
+      <select id="dates" aria-label="跳到某天" title="跳到某天，从这一天向前阅读"></select>
       <span class="grow"></span>
-      <button class="ghost" id="refresh" aria-label="刷新当前日期">刷新</button>
+      <button class="ghost" id="refresh" aria-label="刷新信息流">刷新</button>
+      <button class="primary" id="save">保存全部</button>
       <details class="more" id="more">
         <summary aria-label="更多操作">更多</summary>
         <div class="menu">
           <div id="stat" class="sub"></div>
           <div id="build-version" class="sub"></div>
           <button id="update-shell" hidden>刷新到新版</button>
-          <button id="save-reading">同步阅读状态</button>
-          <button class="primary" id="save">确认并保存决策</button>
-          <button id="queue">投递清洗</button>
+          <button id="queue">投递所选日期的清洗</button>
           <button id="fullscreen">全屏阅读</button>
           <div class="hint">收藏只是标记，不等于归档。投递仍受桌面影子模式保护。</div>
         </div>
@@ -111,7 +119,7 @@ main{max-width:760px;margin:0 auto;padding:8px 12px}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = 'eba65a52ee91be4c';
+const BUILD_VERSION = 'b3818336e7a0785b';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -129,7 +137,10 @@ const S = {
   dates: [], date: '', feed: null, keep: new Map(), pending: {}, reading: emptyReading(),
   store: emptyStore(), readingDirty: false, dirty: false, busy: false, offline: false,
   view: 'good', readFilter: 'all', heldRead: new Set(), storageError: false,
+  loadedDates: [], loading: false, loadError: '', loadPaused: false, scanEmpty: 0,
+  favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null,
 };
+const INITIAL_ITEMS = 20, SCAN_DAYS = 7;
 
 /* ---------------------------------------------------------------- 基础工具 / 本机隔离持久化 */
 function toast(msg, ms = 2600) {
@@ -160,6 +171,8 @@ function restoreLocal() {
     S.readingDirty = !!S.store.readingDirty;
   } catch (e) { S.reading = emptyReading(); S.readingDirty = false; toast('本机缓存无法读取，未使用损坏数据', 5000); }
   S.date = ''; S.feed = null; S.keep = new Map(); S.pending = {}; S.dirty = false;
+  S.loadedDates = []; S.positions = {}; S.filters = {}; S.favoriteAuthor = ''; S.view = 'good'; S.readFilter = 'all';
+  S.loadError = ''; S.failedDate = ''; S.loadPaused = false;
 }
 function persistLocal() {
   if (unsafeHttp()) return false; // 不安全启动未恢复 store，不能在 pagehide 时用空值覆盖旧 HTTP 草稿。
@@ -289,7 +302,7 @@ function waitForVersionWorker(reg, version) {
   });
 }
 function refreshBlocked() {
-  if (S.busy) { toast('正在处理，请稍后刷新新版'); return true; }
+  if (S.busy || S.loading) { toast('正在处理，请稍后刷新新版'); return true; }
   const pending = Object.keys(S.pending).length || Object.values(S.store.days).some(day => Object.keys(day.pending || {}).length);
   if (S.dirty || S.readingDirty || S.storageError || pending) {
     toast('请先确认保存所有日期的决策草稿、同步阅读状态，并解决本机存储错误，再刷新新版', 6500); return true;
@@ -438,14 +451,14 @@ function changeReading(id, field, value) {
   item[field] = field === 'read_at' && value !== null ? stamp : value;
   item[time] = stamp; S.reading.items[id] = item; S.readingDirty = true;
   if (field === 'bucket') {
-    S.pending[id] = value === 'good';
-    // 同 id 跨日期；已缓存日期的待保存决策也跟着走，未缓存日期在加载时对齐。
+    if (allItems().some(it => it.id === id) || S.keep.has(id)) S.pending[id] = value === 'good';
+    // 只为实际操作生成草稿；仅加载或从远端读到状态，不确认未审核日期。
     for (const day of Object.values(S.store.days)) {
       if ((day.feed?.people || []).some(p => p.items.some(it => it.id === id)) || parsePicks(day.picks).has(id)) {
         day.pending = day.pending || {}; day.pending[id] = value === 'good';
       }
     }
-    S.dirty = true;
+    S.dirty = Object.keys(S.pending).length > 0;
   }
   persistLocal(); updateStatus(); return true;
 }
@@ -463,8 +476,11 @@ function allItems() { return S.feed ? S.feed.people.flatMap(p => p.items) : []; 
 function bucketOf(it) {
   const state = readingItem(it.id);
   if (state.bucket) return state.bucket;
-  if (Object.prototype.hasOwnProperty.call(S.pending, it.id)) return S.pending[it.id] ? 'good' : 'water';
-  if (S.keep.get(it.id) === false) return 'water';
+  const day = it._date && it._date !== S.date ? S.store.days[it._date] : null;
+  const pending = day ? day.pending || {} : S.pending;
+  const keep = day ? parsePicks(day.picks) : S.keep;
+  if (Object.prototype.hasOwnProperty.call(pending, it.id)) return pending[it.id] ? 'good' : 'water';
+  if (keep.get(it.id) === false) return 'water';
   return it.bucket === 'water' ? 'water' : 'good';
 }
 function isKeep(id) {
@@ -475,19 +491,29 @@ function isKeep(id) {
 const countItems = () => allItems().filter(it => bucketOf(it) !== 'destroyed').length;
 const countKeep = () => allItems().filter(it => bucketOf(it) === 'good').length;
 function reconcilePending() {
-  for (const it of allItems()) {
-    const state = readingItem(it.id);
-    if (state.bucket && (S.keep.get(it.id) !== (state.bucket === 'good') || it.id in S.pending)) S.pending[it.id] = state.bucket === 'good';
+  // 远端合并可更新已有草稿，但不会凭空生成待确认日期。
+  for (const day of Object.values(S.store.days)) for (const id of Object.keys(day.pending || {})) {
+    if (readingItem(id).bucket) day.pending[id] = readingItem(id).bucket === 'good';
   }
-  // 销毁即使不在当前 feed 也不能再勾选。
-  for (const [id, state] of Object.entries(S.reading.items)) {
-    if (state.bucket === 'destroyed' && S.keep.get(id) === true) S.pending[id] = false;
-  }
+  for (const id of Object.keys(S.pending)) if (readingItem(id).bucket) S.pending[id] = readingItem(id).bucket === 'good';
   S.dirty = Object.keys(S.pending).length > 0;
+}
+function draftDates() {
+  return Object.entries(S.store.days).filter(([, day]) => Object.keys(day.pending || {}).length).map(([date]) => date).sort().reverse();
 }
 function confirmedUTC8(now = new Date()) { return new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 19) + '+08:00'; }
 function isConfirmed(text) { return /^#[ \t]*confirmed:[ \t]*\S[^\n]*$/m.test(text || ''); }
-function buildPicks(day, total, remote = '') {
+function buildPicks(day, total, remote = '', context = null) {
+  const feed = context ? context.feed : S.feed;
+  const pending = context ? context.pending : S.pending;
+  const items = (feed?.people || []).flatMap(p => p.items);
+  const keepItem = it => {
+    const state = readingItem(it.id);
+    if (state.bucket) return state.bucket === 'good';
+    if (typeof pending[it.id] === 'boolean') return pending[it.id];
+    const choice = parsePicks(remote).get(it.id);
+    return choice === false ? false : it.bucket !== 'water';
+  };
   const out = remote ? remote.replace(/\r\n/g, '\n').split('\n') : [
     `# ${day} · 干货 / 水贴 · 共 ${total}`,
     '# 只改 [ ] 里的字符；不要删行、不要改 id。明确确认并保存决策才写入 confirmed。', '',
@@ -496,18 +522,18 @@ function buildPicks(day, total, remote = '') {
   for (let i = 0; i < out.length; i++) {
     const m = out[i].trim().match(RE_ROW); if (!m) continue;
     const id = m[2]; seen.add(id);
-    let keep = S.pending[id];
+    let keep = pending[id];
     const state = readingItem(id);
-    if (state.bucket && allItems().some(it => it.id === id)) keep = state.bucket === 'good';
+    if (state.bucket && items.some(it => it.id === id)) keep = state.bucket === 'good';
     if (state.bucket === 'destroyed') keep = false;
     if (typeof keep === 'boolean') out[i] = out[i].replace(/^(\s*- \[)[ xX](\])/, (_, a, b) => a + (keep ? 'x' : ' ') + b);
   }
   while (out.length && out[out.length - 1] === '') out.pop();
-  for (const p of S.feed?.people || []) for (const it of p.items) {
+  for (const p of feed?.people || []) for (const it of p.items) {
     if (seen.has(it.id)) continue;
     seen.add(it.id);
     const summary = (it.summary || '').replace(/[\r\n]/g, ' ').slice(0, 60);
-    out.push(`- [${isKeep(it.id) ? 'x' : ' '}] ${it.id} · ${p.name.replace(/[\r\n]/g, ' ')} · ${it.cat || '09_其他'} · t${it.topic ?? '-'}/s${it.signal ?? '-'} · ${summary}`);
+    out.push(`- [${keepItem(it) ? 'x' : ' '}] ${it.id} · ${p.name.replace(/[\r\n]/g, ' ')} · ${it.cat || '09_其他'} · t${it.topic ?? '-'}/s${it.signal ?? '-'} · ${summary}`);
   }
   // 消除旧 confirmed 头，固定 UTC+8，与手机系统时区无关。
   const lines = out.filter(line => !/^#[ \t]*confirmed:/.test(line));
@@ -518,19 +544,88 @@ function buildPicks(day, total, remote = '') {
 /* ---------------------------------------------------------------- 渲染：正文始终展开，操作只在帖尾 */
 function setState(text, cls) { const el = $('#state'); el.textContent = text; el.className = 'badge' + (cls ? ' ' + cls : ''); }
 function updateStatus() {
-  const drafts = Object.entries(S.store.days).filter(([day, value]) => day !== S.date && Object.keys(value.pending || {}).length).map(([day]) => day);
+  const drafts = draftDates(), processing = S.busy || S.loading;
   const notes = [];
   if (S.storageError) notes.push('本机存储失败，刷新前请联网保存。');
-  if (S.offline) notes.push('正在使用本机缓存；联网后可刷新、同步阅读状态。');
-  if (S.dirty) notes.push('当前日期决策尚未确认保存，已暂存在本机。');
-  if (S.readingDirty) notes.push('阅读 / 收藏 / 桶状态待同步（不会自动确认 picks）。');
-  if (drafts.length) notes.push('其他日期待确认：' + drafts.join('、'));
+  if (S.offline) notes.push('正在使用本机缓存；联网后可刷新或重试。');
+  if (S.readingDirty) notes.push('阅读 / 收藏 / 分类状态待同步。');
+  if (drafts.length) notes.push('待确认决策：' + drafts.join('、') + '；点击保存全部。');
+  if (!('IntersectionObserver' in window)) notes.push('浏览器使用滚动检测自动已读；读到帖尾停留 1.5 秒。');
   $('#notice').textContent = notes.join(' '); $('#notice').hidden = !notes.length;
-  $('#stat').textContent = `${S.date || ''} · 干货 ${countKeep()} / 可见 ${countItems()} · ${allItems().filter(it => bucketOf(it) !== 'destroyed' && isRead(it.id)).length} 已读`;
-  $('#save').disabled = S.busy || !S.feed;
-  $('#save-reading').disabled = S.busy;
-  $('#queue').disabled = S.busy || !S.feed;
-  setState(S.busy ? '处理中' : S.storageError ? '存储失败' : S.dirty ? '决策待确认' : S.readingDirty ? '状态待同步' : S.offline ? '离线' : '已同步', S.dirty || S.readingDirty || S.storageError ? 'dirty' : S.offline ? '' : 'ok');
+  const items = timelineItems();
+  $('#stat').textContent = `已加载 ${S.loadedDates.length || (S.feed ? 1 : 0)} 天 · ${items.filter(visibleItem).length} 条 · 待确认 ${drafts.length} 天。投递清洗仅针对跳转所选日期 ${S.date || ''}。`;
+  $('#save').disabled = processing || (!S.readingDirty && !drafts.length);
+  $('#save').textContent = drafts.length || S.readingDirty ? '保存全部 · 待保存' : '保存全部';
+  $('#queue').disabled = processing || !S.feed;
+  $('#dates').hidden = S.view === 'favorites';
+  $('#queue').hidden = S.view === 'favorites';
+  setState(processing ? '处理中' : S.storageError ? '存储失败' : drafts.length ? '决策待确认' : S.readingDirty ? '状态待同步' : S.offline ? '离线' : '已同步', drafts.length || S.readingDirty || S.storageError ? 'dirty' : S.offline ? '' : 'ok');
+}
+function knownAuthorKeys() {
+  const names = new Map();
+  for (const day of Object.values(S.store.days)) for (const p of day.feed?.people || []) {
+    for (const it of p.items) {
+      const key = it.author_key || p.key, name = it.author_name || p.name;
+      if (!key) continue;
+      if (!names.has(name)) names.set(name, new Set());
+      names.get(name).add(key);
+    }
+  }
+  return names;
+}
+function dayItems(date, known = knownAuthorKeys()) {
+  const feed = date === S.date ? S.feed : S.store.days[date]?.feed;
+  return (feed?.people || []).flatMap(p => p.items.map(it => {
+    const name = it.author_name || p.name, keys = known.get(name);
+    return Object.assign({}, it, {
+      _date: date, author_name: name,
+      // 仅在稳定 key 唯一时对齐旧作者名；同名多个账号不猜测归并。
+      author_key: it.author_key || p.key || (keys?.size === 1 ? [...keys][0] : 'legacy:' + name),
+    });
+  }));
+}
+function postTime(it) {
+  const stamp = Number(it.created_at);
+  return Number.isFinite(stamp) && stamp > 0 ? stamp * 1000 : Date.parse(`${it._date}T${it.time || '00:00'}:00+08:00`) || 0;
+}
+function timelineItems() {
+  const dates = S.view === 'favorites' ? Object.keys(S.store.days).sort().reverse() : S.loadedDates.length ? S.loadedDates : S.date ? [S.date] : [];
+  const seen = new Set(), items = [], known = knownAuthorKeys();
+  for (const date of dates) for (const it of dayItems(date, known)) if (!seen.has(it.id)) { seen.add(it.id); items.push(it); }
+  return items.sort((a, b) => postTime(b) - postTime(a) || b._date.localeCompare(a._date) || a.id.localeCompare(b.id));
+}
+function favoriteTargets() {
+  return Object.entries(S.reading.items).filter(([, row]) => row.favorite && !['water', 'destroyed'].includes(row.bucket)).map(([id]) => id);
+}
+function unresolvedFavorites() {
+  const found = new Set(timelineItems().map(it => it.id));
+  return favoriteTargets().filter(id => !found.has(id));
+}
+function nextDate() {
+  if (S.failedDate) return S.failedDate;
+  if (S.view === 'favorites') {
+    if (!unresolvedFavorites().length) return '';
+    return S.dates.find(date => !S.loadedDates.includes(date)) || '';
+  }
+  const oldest = S.loadedDates[S.loadedDates.length - 1] || S.date;
+  return S.dates.find(date => date < oldest) || '';
+}
+function positionKey() { return S.view + ':' + (S.view === 'favorites' ? S.favoriteAuthor : 'timeline'); }
+function rememberPosition() {
+  S.positions[positionKey()] = { y: window.scrollY || 0, date: S.date, dates: S.loadedDates.slice() };
+}
+function restorePosition() { if (window.scrollTo) window.scrollTo(0, S.positions[positionKey()]?.y || 0); }
+function paint(parts) {
+  const main = $('#main');
+  // Keyed DOM：追加日期不重建正在阅读的帖子，也不中断帖尾计时。
+  if (!document.createElement || !main.replaceChildren) { main.innerHTML = parts.join(''); return; }
+  const previous = new Map([...main.querySelectorAll('.card')].map(el => [el.dataset.id, el]));
+  const template = document.createElement('template'); template.innerHTML = parts.join('');
+  for (const el of template.content.querySelectorAll('.card')) {
+    const old = previous.get(el.dataset.id);
+    if (old && old.outerHTML === el.outerHTML) el.replaceWith(old);
+  }
+  main.replaceChildren(template.content);
 }
 function visibleItem(it) {
   const bucket = bucketOf(it);
@@ -539,15 +634,42 @@ function visibleItem(it) {
   return S.readFilter === 'all' || (S.readFilter === 'read' ? isRead(it.id) : !isRead(it.id) || S.heldRead.has(it.id));
 }
 function render() {
-  stopObserving();
-  const parts = [];
-  for (const p of S.feed?.people || []) {
-    const items = p.items.filter(visibleItem); if (!items.length) continue;
-    parts.push(`<div class="person">${esc(p.name)}</div>`, ...items.map(card));
+  const y = window.scrollY || 0;
+  const anchor = [...document.querySelectorAll('.card')].find(el => el.getBoundingClientRect().bottom > 80);
+  const anchorTop = anchor?.getBoundingClientRect().top;
+  const items = timelineItems().filter(visibleItem), parts = [];
+  if (S.view === 'favorites' && !S.favoriteAuthor) {
+    const groups = new Map();
+    for (const it of items) {
+      const group = groups.get(it.author_key) || { name: it.author_name, count: 0, latest: '' };
+      group.count++; const stamp = readingItem(it.id).favorite_updated_at || '';
+      if (stamp > group.latest) group.latest = stamp;
+      groups.set(it.author_key, group);
+    }
+    for (const [key, group] of [...groups].sort((a, b) => b[1].latest.localeCompare(a[1].latest) || a[0].localeCompare(b[0]))) {
+      parts.push(`<button class="author-entry" data-author="${esc(key)}"><strong>${esc(group.name)}</strong><small>${group.count} 条收藏${unresolvedFavorites().length ? '（历史内容仍在查找）' : ''}</small></button>`);
+    }
+    if (!parts.length) parts.push('<div class="empty">' + (unresolvedFavorites().length ? '正在查找收藏正文，未加载不等于没有收藏' : '当前筛选下没有收藏') + '</div>');
+  } else {
+    const selected = S.view === 'favorites' ? items.filter(it => it.author_key === S.favoriteAuthor) : items;
+    if (S.view === 'favorites') parts.push(`<div class="favorite-heading"><button data-back-authors>返回作者列表</button><strong>${esc(selected[0]?.author_name || timelineItems().find(it => it.author_key === S.favoriteAuthor)?.author_name || '作者收藏')}</strong><span class="badge">${selected.length} 条</span></div>`);
+    let date = '';
+    for (const it of selected) {
+      if (date !== it._date) { date = it._date; parts.push(`<div class="person">${esc(date)}</div>`); }
+      parts.push(card(it));
+    }
+    if (!selected.length) parts.push('<div class="empty">当前筛选下暂无帖子</div>');
   }
-  $('#main').innerHTML = parts.join('') || '<div class="empty">' + (S.feed ? '这个视图暂无帖子' : '这一天没有可用内容') + '</div>';
+  const next = nextDate(), remaining = S.view === 'favorites' ? unresolvedFavorites().length : 0;
+  const message = S.loadError ? S.loadError : S.loading ? '正在加载更早内容…' : next ? S.loadPaused ? '已扫描多天，暂未找到足够内容；可继续查找' : '向下滑动加载更早内容' : remaining ? `已查找全部可用日期，${remaining} 条收藏正文尚未找到（可能尚未推送或历史 feed 缺失）` : S.view === 'favorites' ? '收藏正文已加载' : '已到最早日期';
+  parts.push(`<div class="load-tail" id="load-tail" role="status">${esc(message)}${S.loading ? '<button data-load-pause>暂停加载</button>' : next || S.loadError ? '<button data-load-more>继续加载 / 重试</button>' : ''}</div>`);
+  paint(parts);
   for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === S.view));
-  updateStatus(); observeEnds();
+  if (window.scrollTo) {
+    const replacement = anchor && [...document.querySelectorAll('.card')].find(el => el.dataset.id === anchor.dataset.id);
+    window.scrollTo(0, replacement ? y + replacement.getBoundingClientRect().top - anchorTop : y);
+  }
+  updateStatus(); observeEnds(); observeMore();
 }
 function card(it) {
   const quotes = (it.quotes || []).map(x => `<div class="quote">${x.nick ? '@' + esc(x.nick) + '：' : ''}${esc(x.text)}</div>`).join('');
@@ -558,9 +680,8 @@ function card(it) {
   return `<article class="card" data-id="${esc(it.id)}">
     ${text}${quotes}${chain}${cm}
     <footer>
-      <div>${esc(it.time)} · ${esc(it.platform)} · <a href="${safeUrl(it.url)}" target="_blank" rel="noreferrer">原文</a> · <span class="read-label">${isRead(it.id) ? '已读' : '未读'}</span>${S.view === 'favorites' ? ' · 干货' : ''}</div>
+      <div><strong class="author-name">${esc(it.author_name || '')}</strong> · ${esc(it._date || S.date)} ${esc(it.time)} · ${esc(it.platform)} · <a href="${safeUrl(it.url)}" target="_blank" rel="noreferrer">原文</a> · <span class="read-label">${isRead(it.id) ? '已读' : '未读'}</span></div>
       <div class="actions">
-        <button data-action="read">${isRead(it.id) ? '标为未读' : '标为已读'}</button>
         ${water ? '' : `<button class="favorite" data-action="favorite" aria-pressed="${favorite}">${favorite ? '取消收藏' : '收藏'}</button>`}
         <button data-action="bucket">${water ? '捞回干货' : '删除到水贴'}</button>
         ${water ? '<button class="danger" data-action="destroy">永久销毁</button>' : ''}
@@ -591,8 +712,11 @@ function armEnd(el, rec) {
   }, 1500);
 }
 function observeEnds() {
-  if (!('IntersectionObserver' in window)) return; // 手工标记在所有浏览器都可用。
-  endObserver = new IntersectionObserver(entries => {
+  for (const [el, rec] of ends) if (!el.isConnected || isRead(el.dataset.end)) {
+    clearTimeout(rec.timer); endObserver?.unobserve(el); ends.delete(el);
+  }
+  if (!('IntersectionObserver' in window)) { checkVisibleEnds(); return; }
+  if (!endObserver) endObserver = new IntersectionObserver(entries => {
     for (const entry of entries) {
       const rec = ends.get(entry.target); if (!rec) continue;
       rec.visible = entry.isIntersecting && entry.intersectionRatio >= 1;
@@ -600,7 +724,7 @@ function observeEnds() {
     }
   }, { threshold: [0, 1] });
   for (const el of document.querySelectorAll('[data-end]')) {
-    if (isRead(el.dataset.end)) continue;
+    if (isRead(el.dataset.end) || ends.has(el)) continue;
     ends.set(el, { visible: false, timer: null }); endObserver.observe(el);
   }
 }
@@ -609,15 +733,41 @@ function markRead(id, read) {
   if (read && isRead(id)) return;
   if (read && S.readFilter === 'unread') S.heldRead.add(id);
   if (!changeReading(id, 'read_at', read ? new Date().toISOString() : null)) return;
-  // 不重建 DOM，不移除未读视图正在读的卡片；手工未读也不在同次停留中立刻读回。
+  // 不重建 DOM，不移除未读视图正在读的卡片。
   for (const el of document.querySelectorAll('.card')) if (el.dataset.id === id) {
     el.querySelector('.read-label').textContent = read ? '已读' : '未读';
-    el.querySelector('[data-action="read"]').textContent = read ? '标为未读' : '标为已读';
+
   }
   for (const [el, rec] of ends) if (el.dataset.end === id) {
     clearTimeout(rec.timer); if (endObserver) endObserver.unobserve(el); ends.delete(el);
   }
 }
+function checkVisibleEnds() {
+  if ('IntersectionObserver' in window) return;
+  for (const el of document.querySelectorAll('[data-end]')) {
+    if (isRead(el.dataset.end)) continue;
+    let rec = ends.get(el);
+    if (!rec) { rec = { visible: false, timer: null }; ends.set(el, rec); }
+    const visible = endVisible(el);
+    if (visible !== rec.visible || (visible && !rec.timer)) { rec.visible = visible; armEnd(el, rec); }
+  }
+}
+let moreObserver = null;
+function observeMore() {
+  moreObserver?.disconnect(); moreObserver = null;
+  if (S.loading || S.busy || S.loadPaused || S.loadError || !nextDate()) return;
+  if ('IntersectionObserver' in window) {
+    moreObserver = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting) && document.visibilityState === 'visible') void loadMore(false);
+    }, { rootMargin: '400px' });
+    const el = $('#load-tail'); if (el) moreObserver.observe(el);
+  }
+}
+window.addEventListener('scroll', () => {
+  checkVisibleEnds();
+  if (!('IntersectionObserver' in window) && !S.loading && !S.busy && !S.loadPaused && !S.loadError && nextDate() && $('#load-tail')?.getBoundingClientRect().top < window.innerHeight + 400) void loadMore(false);
+});
+window.addEventListener('resize', checkVisibleEnds);
 document.addEventListener('visibilitychange', () => {
   persistLocal();
   for (const [el, rec] of ends) armEnd(el, rec); // 隐藏清零，重新可见重新计时。
@@ -631,7 +781,7 @@ function adoptReading(remote) {
   S.reading = merged;
 }
 function fillDates() {
-  $('#dates').innerHTML = S.dates.map(d => `<option value="${d}">${d}</option>`).join('') || '<option value="">无日期</option>';
+  $('#dates').innerHTML = S.dates.map(d => `<option value="${d}">跳到 ${d}</option>`).join('') || '<option value="">无日期</option>';
   $('#dates').value = S.date;
 }
 async function loadDates() {
@@ -642,32 +792,91 @@ async function loadDates() {
   } catch (e) { if (!S.dates.length) throw e; S.offline = true; }
   fillDates();
 }
+function validateFeed(feed, date) {
+  if (!feed || feed.date !== date || !Array.isArray(feed.people) || feed.people.some(p => !p || typeof p.name !== 'string' || !Array.isArray(p.items) || p.items.some(it => !it || !validId(it.id)))) throw new Error(`${date} feed 格式不正确，未替换缓存`);
+  return feed;
+}
+async function fetchDay(date, refresh = false) {
+  const cached = S.store.days[date] || { feed: null, picks: '', pending: {} };
+  S.store.days[date] = cached;
+  if (!refresh && cached.feed) return cached;
+  let error = '';
+  try {
+    const text = fileText(await apiGet(`daily/${date}/feed.json`), `daily/${date}/feed.json`);
+    if (text == null) throw new Error(`${date} 正文尚未推送`);
+    cached.feed = validateFeed(JSON.parse(text), date);
+  } catch (e) { error = e.message; S.offline = true; }
+  try {
+    const text = fileText(await apiGet(`daily/${date}/picks.md`), `daily/${date}/picks.md`);
+    cached.picks = text == null ? '' : text;
+  } catch (e) { S.offline = true; error = error || e.message; }
+  if (date === S.date) {
+    S.feed = cached.feed; S.keep = parsePicks(cached.picks); S.pending = Object.assign({}, cached.pending);
+  }
+  reconcilePending(); persistLocal();
+  // API 失败不能推进日期游标，原地重试；有缓存仍可读，但必须报告未刷新成功。
+  if (error) throw new Error(error);
+  return cached;
+}
 async function loadDay(date) {
-  if (S.busy || !date) return;
+  if (S.busy || S.loading || !date) return;
   persistLocal(); stopObserving(); S.heldRead.clear();
-  S.date = date; S.busy = true; S.offline = false;
+  S.date = date; S.busy = true; S.offline = false; S.loadedDates = [date];
+  S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.scanEmpty = 0;
   const cached = S.store.days[date] || { feed: null, picks: '', pending: {} };
   S.store.days[date] = cached; S.feed = cached.feed; S.keep = parsePicks(cached.picks); S.pending = Object.assign({}, cached.pending);
   reconcilePending(); render(); fillDates();
   try {
     try {
       const text = fileText(await apiGet('data/state/reading_state.json'), 'reading_state.json');
-      adoptReading(text == null ? emptyReading() : JSON.parse(text)); // 文件缺失（含 Gitee 的 []）才算空状态。
+      adoptReading(text == null ? emptyReading() : JSON.parse(text));
     } catch (e) { S.offline = true; toast('阅读状态未取到，继续保留本机状态：' + e.message, 4500); }
-    try {
-      const text = fileText(await apiGet(`daily/${date}/feed.json`), `daily/${date}/feed.json`);
-      if (text != null) S.feed = JSON.parse(text);
-    } catch (e) { S.offline = true; if (!S.feed) toast('没有该日期离线正文：' + e.message, 4500); }
-    try {
-      const text = fileText(await apiGet(`daily/${date}/picks.md`), `daily/${date}/picks.md`);
-      cached.picks = text == null ? '' : text; // 网络错误绝不能被当成远端空 picks。
-      S.keep = parsePicks(cached.picks);
-    } catch (e) { S.offline = true; toast('决策使用本机缓存，改动仍保留', 3500); }
-    reconcilePending(); persistLocal();
+    try { await fetchDay(date, true); }
+    catch (e) { S.failedDate = date; S.loadError = `${date}：${e.message}`; }
   } finally { S.busy = false; render(); }
+  if (!S.loadError) await loadMore(true);
+}
+async function loadMore(initial = false) {
+  if (S.busy || S.loading || S.loadPaused) return;
+  S.loading = true; S.cancelLoad = false; S.loadError = ''; render();
+  try {
+    let scans = 0;
+    while (!S.cancelLoad) {
+      if (!S.failedDate && S.view !== 'favorites' && initial && timelineItems().filter(visibleItem).length >= INITIAL_ITEMS) break;
+      const date = nextDate(); if (!date) break;
+      const before = timelineItems().filter(visibleItem).length;
+      try { await fetchDay(date, S.failedDate === date); }
+      catch (e) { S.failedDate = date; S.loadError = `${date}：${e.message}`; break; }
+      S.failedDate = ''; if (!S.loadedDates.includes(date)) S.loadedDates.push(date); scans++;
+      const gained = timelineItems().filter(visibleItem).length > before;
+      S.scanEmpty = gained ? 0 : S.scanEmpty + 1;
+      render();
+      if (scans >= SCAN_DAYS || S.scanEmpty >= SCAN_DAYS) {
+        if (nextDate() && (S.view === 'favorites' || !gained || initial && timelineItems().filter(visibleItem).length < INITIAL_ITEMS)) S.loadPaused = true;
+        break;
+      }
+      if (!initial && S.view !== 'favorites') break; // 滑到底部一次追加一天，不截断当日。
+    }
+  } finally {
+    if (S.cancelLoad) S.loadPaused = true;
+    S.loading = false; persistLocal(); render();
+  }
+}
+async function switchView(view) {
+  if (S.busy || S.loading) return toast('正在加载或保存，请稍候，或暂停加载');
+  rememberPosition(); persistLocal(); S.filters[S.view] = S.readFilter; S.view = view;
+  S.readFilter = S.filters[view] || 'all'; $('#read-filter').value = S.readFilter; S.heldRead.clear();
+  const position = S.positions[positionKey()];
+  if (view !== 'favorites' && position?.date) {
+    S.date = position.date; S.loadedDates = position.dates.slice();
+    const day = S.store.days[S.date]; S.feed = day?.feed; S.keep = parsePicks(day?.picks); S.pending = Object.assign({}, day?.pending);
+  } else if (view !== 'favorites') S.loadedDates = [S.date];
+  else S.loadedDates = Object.keys(S.store.days).filter(date => S.store.days[date].feed).sort().reverse();
+  S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.scanEmpty = 0;
+  reconcilePending(); fillDates(); render(); restorePosition(); await loadMore(true);
 }
 
-/* ---------------------------------------------------------------- 保存：阅读状态不确认 picks，只有显式按钮确认 */
+/* ---------------------------------------------------------------- 保存全部：只确认已有决策草稿，阅读 / 收藏不产生确认 */
 async function saveReadingState() {
   let written = null;
   await putWithRetry('data/state/reading_state.json', remote => {
@@ -681,32 +890,44 @@ async function saveReadingState() {
   S.readingDirty = !sameReading(current, written); S.reading = current;
   reconcilePending(); persistLocal();
 }
-async function syncReading() {
-  if (S.busy) return;
-  S.busy = true; updateStatus();
-  try { await saveReadingState(); S.offline = false; toast('阅读状态已同步；没有确认 picks'); }
-  catch (e) { toast('同步失败，状态仍在本机：' + e.message, 5000); }
-  finally { S.busy = false; render(); }
-}
 async function save() {
-  if (S.busy || !S.feed) return;
-  if (!confirm('确认当前日期的干货选择并保存到仓库？这会写入 picks 的 confirmed；收藏不等于归档。')) return;
-  S.busy = true; updateStatus();
+  if (S.busy || S.loading) return;
+  persistLocal(); const dates = draftDates();
+  if (!S.readingDirty && !dates.length) return toast('没有待保存改动；未操作日期不会自动确认');
+  const message = dates.length ? `同步全部阅读状态，并确认以下 ${dates.length} 天的待保存决策：\n${dates.join('、')}\n未操作日期不会确认；不会立即清洗或归档。` : '同步全部阅读 / 收藏状态；没有待保存决策，不会确认任何日期。';
+  if (!confirm(message)) return;
+  S.busy = true; updateStatus(); moreObserver?.disconnect();
+  const saved = [], failed = [];
+  let readingSaved = false;
   try {
-    await saveReadingState(); // 先合并远端 tombstone，再构建 picks。
-    let text = '';
-    await putWithRetry(`daily/${S.date}/picks.md`, remote => {
-      text = buildPicks(S.date, S.feed.total || allItems().length, remote); return text;
-    }, `chore(picks): ${S.date} 手机端明确确认`);
-    S.store.days[S.date].picks = text; S.keep = parsePicks(text); S.pending = {}; S.dirty = false; S.offline = false;
-    persistLocal(); toast('决策已确认保存到仓库');
-  } catch (e) { persistLocal(); toast('保存失败，决策仍在本机：' + e.message, 5000); }
-  finally { S.busy = false; render(); }
+    await saveReadingState(); readingSaved = true; // 先合并远端墓碑，再逐日构建 picks。
+    for (const date of dates) {
+      const day = S.store.days[date];
+      const pending = Object.assign({}, day.pending);
+      try {
+        if (!day.feed) throw new Error('缺少该日正文，请先加载该日期再保存');
+        let text = '';
+        await putWithRetry(`daily/${date}/picks.md`, remote => {
+          text = buildPicks(date, day.feed.total || day.feed.people.reduce((n, p) => n + p.items.length, 0), remote, { feed: day.feed, pending });
+          return text;
+        }, `chore(picks): ${date} 手机端明确确认`);
+        day.picks = text;
+        for (const [id, value] of Object.entries(pending)) if (day.pending[id] === value) delete day.pending[id];
+        if (date === S.date) { S.keep = parsePicks(text); S.pending = Object.assign({}, day.pending); }
+        saved.push(date); persistLocal();
+      } catch (e) { failed.push(`${date}：${e.message}`); }
+    }
+    S.offline = failed.length > 0;
+    reconcilePending(); persistLocal();
+    toast(failed.length ? `阅读状态已同步；决策成功 ${saved.length} 天，失败 ${failed.length} 天：${failed.join('；')}。失败草稿已保留，可重试。` : `阅读状态已同步${saved.length ? `；${saved.length} 天决策已确认保存` : '；没有确认任何日期'}${S.readingDirty ? '；保存期间的新已读仍待同步' : ''}`, 6500);
+  } catch (e) {
+    persistLocal(); toast(`${readingSaved ? '阅读状态已同步；' : '阅读状态同步失败，未确认任何决策；'}改动仍在本机：${e.message}`, 6500);
+  } finally { S.busy = false; render(); }
 }
 async function deliver() {
-  if (S.busy || !S.feed) return;
-  if (S.dirty) return toast('先在更多菜单中「确认并保存决策」，再投递');
-  if (!confirm('投递已确认保存的干货到清洗队列？桌面仍受原有影子模式保护，投递不等于完成归档。')) return;
+  if (S.busy || S.loading || !S.feed) return;
+  if (S.dirty) return toast('先点击「保存全部」确认决策，再投递');
+  if (!confirm(`仅投递 ${S.date} 的已确认干货到清洗队列？不会投递其他已加载日期；桌面仍受影子模式保护，投递不等于完成归档。`)) return;
   S.busy = true; updateStatus();
   try {
     await saveReadingState();
@@ -811,42 +1032,89 @@ async function boot() {
   try {
     await loadDates();
     if (!S.dates.length) { updateStatus(); $('#main').innerHTML = '<div class="empty">还没有 daily/ 或本机离线缓存</div>'; return; }
-    await loadDay(S.dates.includes(S.store.lastDate) ? S.store.lastDate : S.dates[0]);
+    await loadDay(S.dates[0]); // 默认从最新日期开始；历史草稿仍独立保留。
   } catch (e) { showLogin('未能读取仓库：' + e.message + '。本机缓存没有删除。'); }
 }
 
 /* ---------------------------------------------------------------- 事件 / 启动 */
 $('#dates').onchange = e => {
-  if (S.busy) { e.target.value = S.date; return toast('正在处理，请稍后切日期'); }
-  preserveDraft(); loadDay(e.target.value);
+  if (S.busy || S.loading) { e.target.value = S.date; return toast('正在处理，请稍候或暂停加载'); }
+  rememberPosition(); preserveDraft(); S.positions[positionKey()] = null;
+  if (window.scrollTo) window.scrollTo(0, 0);
+  void loadDay(e.target.value);
 };
-$('#refresh').onclick = () => { void checkRelease(); void ensureShellWorker(true); if (S.busy) return toast('正在处理'); preserveDraft(); loadDay(S.date); };
+$('#refresh').onclick = async () => {
+  void checkRelease(); void ensureShellWorker(true);
+  if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
+  preserveDraft();
+  try { await loadDates(); } catch (e) { return toast('日期列表刷新失败：' + e.message, 5000); }
+  if (S.view === 'favorites') {
+    S.busy = true;
+    try {
+      const text = fileText(await apiGet('data/state/reading_state.json'), 'reading_state.json');
+      adoptReading(text == null ? emptyReading() : JSON.parse(text));
+      // 刷新收藏会重新查找缓存以外的日期；保留离线正文及作者位置。
+    } catch (e) { S.offline = true; toast('刷新失败，保留本机收藏：' + e.message, 5000); }
+    finally { S.busy = false; }
+    await switchView('favorites');
+  } else await loadDay(S.dates[0] || S.date);
+};
 $('#update-shell').onclick = refreshToNewVersion;
 $('#login-update-shell').onclick = refreshToNewVersion;
 $('#save').onclick = save;
-$('#save-reading').onclick = syncReading;
 $('#queue').onclick = deliver;
 $('#fullscreen').onclick = fullscreen; // 必须由点击触发，绝不在开页时请求。
-for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => { S.view = b.dataset.view; S.heldRead.clear(); render(); };
-$('#read-filter').onchange = e => { S.readFilter = e.target.value; S.heldRead.clear(); render(); };
+for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => { void switchView(b.dataset.view); };
+$('#read-filter').onchange = e => {
+  if (S.busy || S.loading) { e.target.value = S.readFilter; return toast('正在处理，请稍候或暂停加载'); }
+  S.readFilter = e.target.value; S.heldRead.clear(); S.loadPaused = false; S.scanEmpty = 0;
+  render(); void loadMore(true);
+};
 $('#main').addEventListener('click', e => {
+  const control = e.target.closest('button'); if (!control) return;
+  if (control.dataset.loadPause !== undefined) { S.cancelLoad = true; return; }
+  if (control.dataset.loadMore !== undefined) { S.loadPaused = false; S.scanEmpty = 0; void loadMore(true); return; }
+  if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
+  if (control.dataset.author !== undefined) {
+    rememberPosition(); S.favoriteAuthor = control.dataset.author; render(); restorePosition(); return;
+  }
+  if (control.dataset.backAuthors !== undefined) {
+    rememberPosition(); S.favoriteAuthor = ''; render(); restorePosition(); return;
+  }
   const b = e.target.closest('button[data-action]'); if (!b) return;
   const id = b.closest('.card').dataset.id, action = b.dataset.action;
-  const it = allItems().find(it => it.id === id); if (!it || bucketOf(it) === 'destroyed') return;
-  if (S.busy && action !== 'read') return toast('正在同步，请稍后操作');
-  if (action === 'read') { markRead(id, !isRead(id)); return; }
-  if (action === 'favorite' && bucketOf(it) === 'good') changeReading(id, 'favorite', !readingItem(id).favorite);
-  if (action === 'bucket') changeReading(id, 'bucket', bucketOf(it) === 'water' ? 'good' : 'water');
+  const it = timelineItems().find(it => it.id === id); if (!it || bucketOf(it) === 'destroyed') return;
+  if (action === 'favorite' && bucketOf(it) === 'good') {
+    S.undo = { id, field: 'favorite', value: !!readingItem(id).favorite };
+    changeReading(id, 'favorite', !readingItem(id).favorite);
+  }
+  if (action === 'bucket') {
+    S.undo = { id, field: 'bucket', value: bucketOf(it) };
+    changeReading(id, 'bucket', bucketOf(it) === 'water' ? 'good' : 'water');
+  }
   if (action === 'destroy') {
     if (!confirm('永久销毁这条水贴？同步后在所有日期和收藏中永不展示，不能恢复；原始业务文件不会删除。')) return;
-    changeReading(id, 'bucket', 'destroyed');
+    S.undo = null; changeReading(id, 'bucket', 'destroyed');
   }
   render();
+  if (['favorite', 'bucket'].includes(action) && S.undo) {
+    toast(action === 'favorite' ? (readingItem(id).favorite ? '已收藏' : '已取消收藏') : (bucketOf(it) === 'water' ? '已移到水贴' : '已捞回干货'), 5000);
+    const button = document.createElement?.('button');
+    if (button) {
+      button.textContent = '撤销';
+      const undo = S.undo;
+      button.onclick = () => {
+        if (S.busy || S.loading || readingItem(undo.id).bucket === 'destroyed') return toast('正在处理或帖子已销毁，无法撤销');
+        changeReading(undo.id, undo.field, undo.value); S.undo = null; render(); toast('已撤销，仍待保存');
+      };
+      $('#toast').appendChild(button);
+    }
+  } else if (action === 'destroy') toast('已永久隐藏；保存全部后同步到其他设备');
 });
 window.addEventListener('pagehide', persistLocal);
 window.addEventListener('beforeunload', e => {
   persistLocal();
-  if (S.dirty || S.readingDirty || S.storageError) { e.preventDefault(); e.returnValue = ''; }
+  if (S.dirty || draftDates().length || S.readingDirty || S.storageError) { e.preventDefault(); e.returnValue = ''; }
 });
 renderBuildStatus();
 (async function start() {
