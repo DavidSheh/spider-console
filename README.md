@@ -145,18 +145,21 @@ python -B console/publish.py            # 真正写远端、请求构建并等�
 开关。默认正式上传前必须验证实际站点的 HTTPS/TLS；证书错误、重定向或网络失败会停止。
 若 Pages 未强制 HTTPS，会提醒手机只使用 HTTPS 链接；不能在公开 HTTP 页面中输入令牌。
 
-若桌面无法连接站点，但用户已在手机确认同一 HTTPS URL 可以访问，可**显式**使用下列模式。
-它另要求 GitHub API 的证书记录为 approved、未过期且覆盖该域名；不会关闭 API 的 TLS 验证。
-不能把 HTTP 地址、其他站点或未经用户确认的地址拿来跳过默认预检。
+若桌面无法连接站点（GitHub Pages 的 IP 在部分网络下不可达，这是常态），**直接显式**使用下列
+模式，不需要也不应让人去手机上确认能否访问。它要求 GitHub API 的证书记录为 approved、未过期
+且覆盖该域名，并且 URL 与 Pages 实际地址完全一致；不会关闭 API 的 TLS 验证。
+不能把 HTTP 地址或其他站点的地址拿来跳过默认预检，也不能不传 URL 就隐式跳过站点核对。
+`--confirmed-https-url` 是旧参数名，仍可用，但不再含「已确认」之意。
 
 ```bash
 # 先只读检查，再发布；URL 必须与 Pages 实际 HTTPS 地址完全一致
-python -B console/publish.py --check --api-only --confirmed-https-url https://codebug.top/spider-console/
-python -B console/publish.py --api-only --confirmed-https-url https://codebug.top/spider-console/
+python -B console/publish.py --check --api-only --https-url https://codebug.top/spider-console/
+python -B console/publish.py --api-only --https-url https://codebug.top/spider-console/
 ```
 
-该模式只确认目标提交的 Pages 构建完成，**不会声称桌面线上 HTML/SW 验证成功**；手机仍需检查
-「更多」中的版本号及阅读功能。默认命令依旧要求桌面 HTTPS 实际探测；此例外不能作为常驻配置。
+该模式只确认目标提交的 Pages 构建完成，**不会声称桌面站点连接或线上 HTML/SW 验证成功**
+（输出会写明「桌面站点连接与线上文件未验证」）。默认命令依旧要求桌面 HTTPS 实际探测；
+此模式不能自动启用，也不能存成常驻默认配置。
 
 默认等待 180 秒轮询目标提交的构建（单个网络请求最多 20 秒 socket 超时；DNS/网络可能使总时长更长）。
 `--timeout 300` 可延长轮询等待；`--no-wait` 只是不等构建，不能据此认为已部署。
