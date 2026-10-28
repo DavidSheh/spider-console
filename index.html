@@ -163,7 +163,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = '980b030145fbd4ea';
+const BUILD_VERSION = '9cfda9b6d9468948';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -831,11 +831,20 @@ function render() {
   }
   paint(parts);
   for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === S.view));
-  if (window.scrollTo) {
-    const replacement = anchor && [...document.querySelectorAll('.card')].find(el => el.dataset.id === anchor.dataset.id);
-    window.scrollTo(0, replacement ? y + replacement.getBoundingClientRect().top - anchorTop : y);
-  }
-  updateStatus(); observeEnds(); observeMore(); renderSheet();
+  updateStatus(); // 先改完顶部 / 提示条布局，再量位置，否则它们的伸缩会把刚补好的滚动位再顶歪。
+  restoreAfterPaint(anchor, anchorTop, y);
+  observeEnds(); observeMore(); renderSheet();
+}
+/* 保持「正在读的那一屏」不动：收藏 / 取收藏、移水贴、加已读都可能重排，甚至把卡片移出列表。
+   paint 换卡时会把旧节点搬出 main，浏览器会趁 main 变短把滚动位置夹回 0（真机实测），
+   所以不能用 paint 之前的 scrollY 直接补偿；改用元素在文档里的坐标重算目标位置。 */
+function restoreAfterPaint(anchor, anchorTop, y) {
+  if (!window.scrollTo) return;
+  const replacement = anchor && [...document.querySelectorAll('.card')].find(el => el.dataset.id === anchor.dataset.id);
+  // 锚点还在：让它的视口位置回到原位。锚点是被移走的那张卡时退回到操作前的滚动位置，
+  // 让下面的卡片上移补位，而不是把整屏滚走。
+  const next = replacement ? replacement.getBoundingClientRect().top + (window.scrollY || 0) - anchorTop : y;
+  window.scrollTo(0, Math.max(0, next));
 }
 function card(it, detail = false) {
   const id = esc(it.id);
