@@ -9,17 +9,18 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
-:root{--bg:#0f1115;--card:#171a21;--card2:#1d2129;--line:#272c36;--fg:#e8eaee;--dim:#9aa3b2;--dim2:#788291;--ok:#4ade80;--accent:#7dd3fc}
+/* 手机阅读版式对齐雪球 App：全宽信息流行、作者头行、正文 18px/1.66、评论 15px、底部四键操作栏。 */
+:root{--bg:#0f1115;--card:#15171d;--card2:#1d2129;--chip:#1f232c;--line:#24272f;--line2:#2c313b;--fg:#e9ebef;--dim:#9aa3b2;--dim2:#78828f;--ok:#4ade80;--accent:#7dd3fc;--star:#fbbf24;--danger:#fca5a5;--fs-body:18px;--fs-cmt:15px;--fs-meta:12.5px;--pad:16px}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 [hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--fg);font:18px/1.85 -apple-system,BlinkMacSystemFont,"HarmonyOS Sans SC","PingFang SC","Noto Sans SC",sans-serif;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"HarmonyOS Sans SC","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;padding-bottom:calc(36px + env(safe-area-inset-bottom));-webkit-font-smoothing:antialiased}
 a{color:var(--accent)}
-header{position:sticky;top:0;z-index:10;background:rgba(15,17,21,.96);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:calc(5px + env(safe-area-inset-top)) 12px 5px}
+svg{display:block}
+header{position:sticky;top:0;z-index:20;background:rgba(15,17,21,.94);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:calc(6px + env(safe-area-inset-top)) var(--pad) 6px}
 .header-inner{max-width:760px;margin:auto}
 .row{display:flex;align-items:center;gap:8px;min-width:0}
-.grow{flex:1}
-.title{font-size:14px;font-weight:600}
+.grow{flex:1;min-width:0}
 select,button,input,summary{font:inherit;color:var(--fg)}
 select,button{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:13px;cursor:pointer}
 button:active{background:#28303d}
@@ -27,88 +28,124 @@ button.primary{background:#1d4ed8;border-color:#2563eb;font-weight:600}
 button.ghost{background:transparent}
 button:disabled{opacity:.45;cursor:wait}
 button:focus-visible,summary:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.tabs{display:flex;gap:2px}
-.tabs button{border-color:transparent;background:transparent;padding:5px 8px}
-.tabs button[aria-pressed="true"]{color:var(--accent);background:var(--card2)}
-.filters{margin-top:3px;gap:4px}
-.filters select{padding:4px;font-size:12px;max-width:96px}
+.tabs{display:flex;gap:18px;min-width:0;overflow:hidden}
+.tabs button{position:relative;background:transparent;border:0;border-radius:0;padding:5px 0;line-height:1.3;font-size:16px;color:var(--dim);white-space:nowrap}
+.tabs button[aria-pressed="true"]{color:var(--fg);font-weight:600;background:transparent}
+.tabs button[aria-pressed="true"]:after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:1px;width:18px;height:2.5px;border-radius:2px;background:var(--fg)}
 .badge{font-size:11px;color:var(--dim);white-space:nowrap}
 .badge.dirty{color:#fbbf24}
 .badge.ok{color:var(--ok)}
+#save{padding:5px 10px;white-space:nowrap}
 .more{position:relative;font-size:13px}
-.more summary{cursor:pointer;list-style:none;padding:6px 8px;border-radius:9px}
+.more summary{cursor:pointer;list-style:none;width:32px;height:30px;display:grid;place-items:center;color:var(--dim);border-radius:8px}
 .more summary::-webkit-details-marker{display:none}
-.menu{position:absolute;right:0;top:100%;width:min(290px,90vw);padding:12px;background:var(--card2);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 40px #0008}
+.more summary svg{width:20px;height:20px}
+.more[open] summary{color:var(--fg);background:var(--card2)}
+.menu{position:absolute;right:0;top:100%;width:min(290px,88vw);padding:10px 12px;background:var(--card2);border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px #000a}
 .menu button{display:block;width:100%;margin:6px 0;text-align:left;padding:10px}
+.menu select{display:block;width:100%;margin:6px 0;padding:10px;font-size:14px}
 .sub,.hint{font-size:12px;color:var(--dim);line-height:1.6}
-#notice,#shell-notice{padding:8px 16px 0;max-width:760px;margin:auto;color:#fbbf24;font-size:12px;line-height:1.6}
-main{max-width:760px;margin:0 auto;padding:8px 12px}
-.person{margin:22px 4px 8px;font-size:13px;color:var(--dim);display:flex;align-items:center;gap:10px}
-.person:after{content:"";flex:1;height:1px;background:var(--line)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 18px;margin:12px 0;overflow-wrap:anywhere}
-.card p{margin:0 0 16px;white-space:pre-wrap;word-break:break-word}
-.card .quote{color:var(--dim);border-left:2px solid var(--line);padding-left:12px;margin:16px 0;white-space:pre-wrap}
-.card blockquote{margin:16px 0;padding:12px;background:var(--card2);border-radius:8px;color:var(--dim);white-space:pre-wrap}
-.card .cmts{margin-top:18px;border-top:1px dashed var(--line);padding-top:12px}
-.card .cmts div{color:var(--dim);margin:10px 0;white-space:pre-wrap}
-.card .cmts b{color:var(--fg);font-weight:600}
-.card footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--dim)}
-.card .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.card .author-name{color:var(--fg);font-size:14px;font-weight:700}
-.author-entry{display:block;width:100%;text-align:left;margin:10px 0;padding:14px;font-size:16px}
-.author-entry small{display:block;color:var(--dim);font-size:12px}
-.load-tail{text-align:center;padding:20px 8px;color:var(--dim);font-size:13px}
+#notice,#shell-notice{padding:8px var(--pad) 0;max-width:760px;margin:auto;color:#fbbf24;font-size:12px;line-height:1.6}
+main{max-width:760px;margin:0 auto}
+.person{padding:10px var(--pad);font-size:12px;color:var(--dim2);background:#0c0e12;border-bottom:1px solid var(--line);letter-spacing:.02em}
+.card{background:var(--card);padding:14px var(--pad) 2px;border-bottom:1px solid var(--line)}
+.card .head{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:10px}
+.avatar{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;font-size:12.5px;font-weight:600;color:#fff;background:#2b3240;overflow:hidden}
+.card .head .name{font-size:14px;font-weight:500;color:#d3dae6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+.card .head .meta{flex:1;min-width:0;font-size:var(--fs-meta);color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plat{display:inline-block;margin-right:5px;padding:1px 5px;border-radius:4px;background:var(--chip);color:var(--dim);font-size:10.5px;vertical-align:1px}
+.read-label{flex:none;font-size:11px;color:var(--dim2)}
+.read-label:before{content:"·";margin-right:3px}
+.card .body{font-size:var(--fs-body);line-height:1.66;color:#e6e9ef;overflow-wrap:anywhere}
+.card .body p{margin:0 0 14px;white-space:pre-wrap;word-break:break-word}
+.card .body p:last-child{margin-bottom:2px}
+.card .quote{color:var(--dim);border-left:2px solid var(--line2);padding-left:12px;margin:14px 0;font-size:16px;line-height:1.6;white-space:pre-wrap}
+.card blockquote{margin:14px 0;padding:12px;background:var(--card2);border-radius:10px;color:var(--dim);font-size:15px;line-height:1.6;white-space:pre-wrap}
+.card .actions{display:flex;align-items:center;justify-content:space-between;gap:2px;margin-top:6px;padding:2px 0 6px}
+.card .actions .act{display:inline-flex;align-items:center;gap:6px;min-height:40px;background:transparent;border:0;border-radius:8px;padding:9px 8px;font-size:13.5px;color:var(--dim)}
+.card .actions .act svg{width:19px;height:19px;pointer-events:none}
+.card .actions .act:active{background:#1e222a;color:var(--fg)}
+.card .actions .act[aria-pressed="true"]{color:var(--star)}
+.card .actions .act[aria-pressed="true"] svg{fill:currentColor}
+.card .actions .count{font-size:12.5px;color:var(--dim2)}
+.card .actions .act[aria-pressed="true"] .count{color:inherit}
+.card .actions .more-btn{margin-left:auto;padding:9px 6px}
+.detail-bar{position:sticky;top:0;z-index:15;display:flex;align-items:center;gap:10px;padding:calc(6px + env(safe-area-inset-top)) 8px 6px var(--pad);background:rgba(15,17,21,.94);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.detail-bar .back{display:grid;place-items:center;background:transparent;border:0;border-radius:8px;padding:2px 4px;color:var(--fg)}
+.detail-bar .back svg{width:24px;height:24px}
+.detail-bar .avatar{width:26px;height:26px;font-size:12px}
+.detail-bar .name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.detail-bar .act{display:grid;place-items:center;background:transparent;border:0;border-radius:8px;padding:6px;color:var(--dim)}
+.detail-bar .act svg{width:20px;height:20px}
+.card.detail .head{margin-bottom:8px}
+.cmts{background:var(--card);border-bottom:1px solid var(--line);padding:0 var(--pad) 18px}
+.cmts-head{display:flex;align-items:center;gap:8px;padding:14px 0 10px;border-bottom:1px solid var(--line);font-size:15px;font-weight:600}
+.cmt{display:flex;gap:10px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.045)}
+.cmt:last-child{border-bottom:0;padding-bottom:2px}
+.cmt .avatar{width:26px;height:26px;font-size:12px;margin-top:2px}
+.cmt .cmt-body{flex:1;min-width:0}
+.cmt .cmt-name{font-size:13px;color:var(--dim);margin-bottom:4px}
+.cmt .cmt-text{font-size:var(--fs-cmt);line-height:1.62;color:#dfe4ec;white-space:pre-wrap;overflow-wrap:anywhere}
+.author-entry{display:block;width:100%;text-align:left;background:var(--card);border:0;border-bottom:1px solid var(--line);border-radius:0;padding:16px var(--pad);font-size:16px}
+.author-entry small{display:block;margin-top:4px;color:var(--dim);font-size:12px}
+.load-tail{text-align:center;padding:22px 8px;color:var(--dim);font-size:13px}
 .load-tail button{margin:6px}
-.favorite-heading{display:flex;gap:12px;align-items:center;padding:12px 0}
+.favorite-heading{display:flex;gap:12px;align-items:center;padding:12px var(--pad);border-bottom:1px solid var(--line)}
 #dates{max-width:145px}
-#save{white-space:nowrap}
-.card .actions button{padding:8px 10px}
-.card .favorite[aria-pressed="true"]{color:#fbbf24}
-.card .danger{color:#fca5a5}
 .sentinel{height:2px;margin-top:10px;pointer-events:none}
-.login{max-width:520px;margin:auto;padding:24px 8px}
+.login{max-width:520px;margin:auto;padding:24px 16px}
 .login h1{font-size:20px;margin:6px 0}
 .login label{display:block;margin:16px 0 6px;font-size:13px;color:var(--dim)}
 .login input{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:16px}
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));background:#111827;border:1px solid var(--line);padding:10px 16px;border-radius:12px;font-size:14px;line-height:1.6;z-index:50;opacity:0;pointer-events:none;transition:.2s;width:max-content;max-width:90vw;text-align:center}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));background:#111827;border:1px solid var(--line);padding:10px 16px;border-radius:12px;font-size:14px;line-height:1.6;z-index:70;opacity:0;pointer-events:none;transition:.2s;width:max-content;max-width:90vw;text-align:center;overflow-wrap:anywhere;word-break:break-word}
 .toast.show{opacity:1;pointer-events:auto}
 .toast button{margin-left:10px}
-.empty{color:var(--dim);text-align:center;padding:60px 20px;font-size:16px}
-@media(max-width:360px){.title{display:none}.card{padding:18px 14px}.tabs button{padding:5px 6px}}
+.empty{color:var(--dim);text-align:center;padding:60px 20px;font-size:15px}
+.sheet-wrap{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;justify-content:flex-end}
+.sheet-mask{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+.sheet-panel{position:relative;background:#14161c;border-top:1px solid var(--line2);border-radius:16px 16px 0 0;padding:20px 12px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -16px 44px rgba(0,0,0,.6);animation:sheet-in .16s ease-out}
+@keyframes sheet-in{from{transform:translateY(14px);opacity:.6}to{transform:none;opacity:1}}
+.sheet-items{display:flex;align-items:flex-start;justify-content:space-around;gap:6px}
+.sheet-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;background:transparent;border:0;padding:4px 2px;font-size:13px;color:var(--fg)}
+.sheet-item .ico{display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:var(--chip);color:#e7eaf0}
+.sheet-item .ico svg{width:23px;height:23px}
+.sheet-item:active .ico{background:#2a303b}
+.sheet-item.danger{color:var(--danger)}
+.sheet-item.danger .ico{color:var(--danger)}
+.sheet-item[disabled]{opacity:.4}
+.sheet-cancel{display:block;width:100%;margin-top:18px;padding:14px;background:var(--chip);border:0;border-radius:12px;font-size:15px;font-weight:600}
+@media(min-width:600px){main{padding:0 12px}.card{border:1px solid var(--line);border-radius:14px;margin:14px 0;padding:16px 18px 4px}.cmts{border:1px solid var(--line);border-radius:14px;margin:0 0 14px;padding:0 18px 16px}.detail-bar{margin:0 -12px}.author-entry{border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:14px 16px}}
+@media(max-width:360px){.tabs{gap:12px}.tabs button{font-size:15px}#state{display:none}}
 </style>
 </head>
 <body>
 <header id="hdr" hidden>
   <div class="header-inner">
     <div class="row">
-      <span class="title">阅读</span>
-      <select id="dates" aria-label="跳到某天" title="跳到某天，从这一天向前阅读"></select>
-      <span class="grow"></span>
-      <button class="ghost" id="refresh" aria-label="刷新信息流">刷新</button>
-      <button class="primary" id="save">保存全部</button>
-      <details class="more" id="more">
-        <summary aria-label="更多操作">更多</summary>
-        <div class="menu">
-          <div id="stat" class="sub"></div>
-          <div id="build-version" class="sub"></div>
-          <button id="update-shell" hidden>刷新到新版</button>
-          <button id="queue">投递所选日期的清洗</button>
-          <button id="fullscreen">全屏阅读</button>
-          <div class="hint">收藏只是标记，不等于归档。投递仍受桌面影子模式保护。</div>
-        </div>
-      </details>
-    </div>
-    <div class="row filters">
       <nav class="tabs" aria-label="阅读视图">
         <button data-view="good" aria-pressed="true">干货</button>
         <button data-view="water" aria-pressed="false">水贴</button>
         <button data-view="favorites" aria-pressed="false">收藏</button>
       </nav>
       <span class="grow"></span>
-      <select id="read-filter" aria-label="已读过滤">
-        <option value="all">默认（全部）</option><option value="read">已读</option><option value="unread">未读</option>
-      </select>
+      <button class="primary" id="save" hidden>保存</button>
       <span id="state" class="badge" aria-live="polite">加载中</span>
+      <details class="more" id="more">
+        <summary aria-label="更多操作" title="更多操作"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></summary>
+        <div class="menu">
+          <div id="stat" class="sub"></div>
+          <select id="dates" aria-label="跳到某天" title="跳到某天，从这一天向前阅读"></select>
+          <select id="read-filter" aria-label="已读过滤">
+            <option value="all">已读过滤：全部</option><option value="read">已读过滤：已读</option><option value="unread">已读过滤：未读</option>
+          </select>
+          <button id="refresh">刷新信息流</button>
+          <button id="queue">投递所选日期的清洗</button>
+          <div id="build-version" class="sub"></div>
+          <button id="update-shell" hidden>刷新到新版</button>
+          <button id="fullscreen">全屏阅读</button>
+          <div class="hint">收藏只是标记，不等于归档。投递仍受桌面影子模式保护。</div>
+        </div>
+      </details>
     </div>
   </div>
 </header>
@@ -116,10 +153,17 @@ main{max-width:760px;margin:0 auto;padding:8px 12px}
 <div id="shell-notice" role="status" hidden><span id="shell-message"></span> <button id="login-update-shell" hidden>刷新到新版</button></div>
 <main id="main"></main>
 <div class="toast" id="toast" role="status"></div>
+<div class="sheet-wrap" id="sheet" hidden>
+  <div class="sheet-mask" id="sheet-mask"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="更多操作">
+    <div class="sheet-items" id="sheet-items"></div>
+    <button class="sheet-cancel" data-sheet-close="1">取消</button>
+  </div>
+</div>
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = 'b3818336e7a0785b';
+const BUILD_VERSION = 'c7a99cb3c01848d5';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -138,7 +182,7 @@ const S = {
   store: emptyStore(), readingDirty: false, dirty: false, busy: false, offline: false,
   view: 'good', readFilter: 'all', heldRead: new Set(), storageError: false,
   loadedDates: [], loading: false, loadError: '', loadPaused: false, scanEmpty: 0,
-  favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null,
+  favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null, openId: '', sheetId: '',
 };
 const INITIAL_ITEMS = 20, SCAN_DAYS = 7;
 
@@ -150,7 +194,6 @@ function toast(msg, ms = 2600) {
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function safeUrl(s) { return /^https?:\/\//i.test(s || '') ? esc(s) : '#'; }
 function b64enc(str) {
   const bytes = new TextEncoder().encode(str); let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -172,7 +215,7 @@ function restoreLocal() {
   } catch (e) { S.reading = emptyReading(); S.readingDirty = false; toast('本机缓存无法读取，未使用损坏数据', 5000); }
   S.date = ''; S.feed = null; S.keep = new Map(); S.pending = {}; S.dirty = false;
   S.loadedDates = []; S.positions = {}; S.filters = {}; S.favoriteAuthor = ''; S.view = 'good'; S.readFilter = 'all';
-  S.loadError = ''; S.failedDate = ''; S.loadPaused = false;
+  S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.openId = ''; S.sheetId = '';
 }
 function persistLocal() {
   if (unsafeHttp()) return false; // 不安全启动未恢复 store，不能在 pagehide 时用空值覆盖旧 HTTP 草稿。
@@ -384,7 +427,13 @@ async function putWithRetry(path, build, message) {
   for (let i = 0; i < 2; i++) {
     const cur = fileEntry(await apiGet(path), path);
     if (cur && !cur.sha) throw new Error(`${path} 远端条目缺少 sha，未覆盖远端`);
-    const res = await apiPut(path, build(cur ? fileText(cur, path) : ''), message, cur ? cur.sha : '');
+    const remoteText = cur ? fileText(cur, path) : '';
+    const text = build(remoteText);
+    // 内容与远端逐字节相同时不写：Gitee 的 contents 接口对相同内容也落一个提交，
+    // 手机上重复点「保存全部」就会造出空提交（2026-10-28 实际发生）。
+    // build 仍要执行（调用方在闭包里取合并结果），只是不发起写请求。
+    if (cur && text === remoteText) return { unchanged: true };
+    const res = await apiPut(path, text, message, cur ? cur.sha : '');
     if (!res.conflict) return res;
     if (i === 0) await sleep(300);
   }
@@ -541,25 +590,130 @@ function buildPicks(day, total, remote = '', context = null) {
   return lines.join('\n') + '\n';
 }
 
-/* ---------------------------------------------------------------- 渲染：正文始终展开，操作只在帖尾 */
-function setState(text, cls) { const el = $('#state'); el.textContent = text; el.className = 'badge' + (cls ? ' ' + cls : ''); }
+/* ---------------------------------------------------------------- 图标 / 头像：内联 SVG，无外部请求
+   路径取自 Feather Icons（MIT）与 Lucide（ISC）风格，内联以避开额外缓存文件与第三方域名。 */
+const SVG = body => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+const ICONS = {
+  share: SVG('<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>'),
+  comment: SVG('<path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 8.9 8.9 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>'),
+  star: SVG('<path d="M12 3.3l2.7 5.4 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6L3.3 9.6l6-.9z"/>'),
+  more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>',
+  back: SVG('<polyline points="15 19 8 12 15 5"/>'),
+  down: SVG('<line x1="12" y1="4" x2="12" y2="19"/><polyline points="18 13 12 19 6 13"/>'),
+  undo: SVG('<polyline points="4 4 4 10 10 10"/><path d="M4.6 14a8 8 0 1 0 2-8.3L4 10"/>'),
+  trash: SVG('<polyline points="4 7 20 7"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>'),
+  compass: SVG('<circle cx="12" cy="12" r="9"/><polygon points="15.5 8.5 13.8 13.8 8.5 15.5 10.2 10.2"/>'),
+};
+const icon = name => ICONS[name] || '';
+function avatarTag(name, key) {
+  let hue = 0;
+  for (const ch of String(key || name || '?')) hue = (hue * 31 + ch.codePointAt(0)) % 360;
+  const initial = String(name || '').trim().slice(0, 1) || '?';
+  return `<span class="avatar" style="background:hsl(${hue},34%,32%)" aria-hidden="true">${esc(initial)}</span>`;
+}
+function whenLabel(it) {
+  const date = it._date || S.date || '', time = it.time || '';
+  return ((date.length >= 10 ? date.slice(5) : date) + ' ' + time).trim();
+}
+function platTag(it) { return it.platform ? `<span class="plat">${esc(it.platform)}</span>` : ''; }
+
+/* ---------------------------------------------------------------- 帖子详情：评论单独成页，返回恢复列表位置 */
+function closeMenu() { const more = $('#more'); if (more) more.open = false; }
+function openSheet(id) {
+  const it = timelineItems().find(it => it.id === id && bucketOf(it) !== 'destroyed');
+  if (!it) return;
+  // 弹窗占据屏幕底部，先收起可能正在显示的提示，否则会盖住「取消」。
+  closeMenu(); $('#toast').classList.remove('show');
+  S.sheetId = id; renderSheet();
+}
+function closeSheet() { if (S.sheetId) { S.sheetId = ''; renderSheet(); } else { const wrap = $('#sheet'); if (wrap) wrap.hidden = true; } }
+function renderSheet() {
+  const wrap = $('#sheet'); if (!wrap) return;
+  const it = S.sheetId ? timelineItems().find(it => it.id === S.sheetId && bucketOf(it) !== 'destroyed') : null;
+  if (!it) { S.sheetId = ''; wrap.hidden = true; const items = $('#sheet-items'); if (items) items.innerHTML = ''; return; }
+  const water = bucketOf(it) === 'water';
+  const url = /^https?:\/\//i.test(it.url || '') ? it.url : '';
+  $('#sheet-items').innerHTML = [
+    `<button class="sheet-item" data-sheet-action="bucket"><span class="ico">${icon(water ? 'undo' : 'down')}</span><span>${water ? '捞回干货' : '水贴'}</span></button>`,
+    `<button class="sheet-item danger" data-sheet-action="destroy"><span class="ico">${icon('trash')}</span><span>销毁</span></button>`,
+    `<button class="sheet-item" data-sheet-action="open"${url ? '' : ' disabled'}><span class="ico">${icon('compass')}</span><span>浏览器打开</span></button>`,
+  ].join('');
+  wrap.hidden = false;
+}
+/* 分享原文链接：优先系统分享面板，其次剪贴板，最后把链接显示出来。
+   不用 prompt：手机上是阻塞式原生弹窗，也不方便长按选取。 */
+async function sharePost(it) {
+  const url = /^https?:\/\//i.test(it.url || '') ? it.url : '';
+  if (!url) return toast('这条帖子没有可分享的原文链接');
+  const data = { title: `${it.author_name || '帖子'}的帖子`, text: (it.text || '').replace(/\s+/g, ' ').trim().slice(0, 80), url };
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try { await navigator.share(data); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(url); return toast('原文链接已复制'); } catch (e) { /* 未聚焦 / 无权限时继续降级。 */ }
+  }
+  if (copyText(url)) return toast('原文链接已复制');
+  toast('原文链接：' + url, 8000);
+}
+/* 剪贴板降级：`navigator.clipboard` 在未聚焦的页面 / 旧 WebView 会拒绝，execCommand 在用户手势里仍可用。 */
+function copyText(text) {
+  const area = document.createElement?.('textarea');
+  if (!area || !document.body || typeof document.execCommand !== 'function') return false;
+  try {
+    area.value = text; area.setAttribute('readonly', '');
+    area.style.position = 'fixed'; area.style.top = '-1000px'; area.style.opacity = '0';
+    document.body.appendChild(area); area.select();
+    if (area.setSelectionRange) area.setSelectionRange(0, text.length);
+    const ok = !!document.execCommand('copy');
+    area.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+function openExternal(url) {
+  if (!/^https?:\/\//i.test(url || '')) return toast('这条帖子没有可打开的原文链接');
+  if (typeof window !== 'undefined' && typeof window.open === 'function') { window.open(url, '_blank', 'noopener,noreferrer'); return; }
+  location.assign(url);
+}
+function openDetail(id) {
+  const it = timelineItems().find(it => it.id === id && bucketOf(it) !== 'destroyed');
+  if (!it || S.openId) return;
+  rememberPosition(); S.openId = id; closeMenu(); closeSheet();
+  // 用 history 记一层，让手机返回手势 / 浏览器返回先回列表，贴近微博 / 雪球的帖子详情习惯。
+  if (typeof history !== 'undefined' && history.pushState) { try { history.pushState({ spiderDetail: id }, ''); } catch (e) { /* 无 history 环境（file / 测试）不影响阅读 */ } }
+  render(); if (window.scrollTo) window.scrollTo(0, 0);
+}
+function closeDetail(fromHistory = false) {
+  if (!S.openId) return;
+  S.openId = ''; render(); restorePosition();
+  if (!fromHistory && typeof history !== 'undefined' && history.state?.spiderDetail) history.back();
+}
+window.addEventListener('popstate', () => closeDetail(true));
+
+/* ---------------------------------------------------------------- 渲染：正文始终展开，作者置顶，操作只在帖尾 */
+function setState(text, cls) { const el = $('#state'); el.textContent = text; el.className = 'badge' + (cls ? ' ' + cls : ''); el.hidden = !text; }
 function updateStatus() {
   const drafts = draftDates(), processing = S.busy || S.loading;
   const notes = [];
   if (S.storageError) notes.push('本机存储失败，刷新前请联网保存。');
   if (S.offline) notes.push('正在使用本机缓存；联网后可刷新或重试。');
-  if (S.readingDirty) notes.push('阅读 / 收藏 / 分类状态待同步。');
-  if (drafts.length) notes.push('待确认决策：' + drafts.join('、') + '；点击保存全部。');
+  if (drafts.length) notes.push('待确认决策：' + drafts.join('、') + '；点击顶部「保存」。');
   if (!('IntersectionObserver' in window)) notes.push('浏览器使用滚动检测自动已读；读到帖尾停留 1.5 秒。');
   $('#notice').textContent = notes.join(' '); $('#notice').hidden = !notes.length;
   const items = timelineItems();
   $('#stat').textContent = `已加载 ${S.loadedDates.length || (S.feed ? 1 : 0)} 天 · ${items.filter(visibleItem).length} 条 · 待确认 ${drafts.length} 天。投递清洗仅针对跳转所选日期 ${S.date || ''}。`;
-  $('#save').disabled = processing || (!S.readingDirty && !drafts.length);
-  $('#save').textContent = drafts.length || S.readingDirty ? '保存全部 · 待保存' : '保存全部';
+  const unsaved = S.readingDirty || drafts.length > 0;
+  $('#save').disabled = processing || !unsaved;
+  // 没有待保存改动时保存按钮不占顶部；只有自动已读这种常规待同步也不重复显示状态条。
+  $('#save').hidden = !unsaved;
+  $('#save').textContent = drafts.length ? `保存 ${drafts.length} 天` : '保存';
   $('#queue').disabled = processing || !S.feed;
   $('#dates').hidden = S.view === 'favorites';
   $('#queue').hidden = S.view === 'favorites';
-  setState(processing ? '处理中' : S.storageError ? '存储失败' : drafts.length ? '决策待确认' : S.readingDirty ? '状态待同步' : S.offline ? '离线' : '已同步', drafts.length || S.readingDirty || S.storageError ? 'dirty' : S.offline ? '' : 'ok');
+  // 帖子详情自带返回条，隐藏顶部控件把阅读面积让给正文与评论。
+  $('#hdr').hidden = !!S.openId;
+  const label = processing ? '处理中' : S.storageError ? '存储失败' : drafts.length ? `待确认 ${drafts.length} 天` : S.offline ? '离线' : S.readingDirty ? '' : '已同步';
+  setState(label, drafts.length || S.storageError ? 'dirty' : label === '已同步' ? 'ok' : '');
 }
 function knownAuthorKeys() {
   const names = new Map();
@@ -638,7 +792,17 @@ function render() {
   const anchor = [...document.querySelectorAll('.card')].find(el => el.getBoundingClientRect().bottom > 80);
   const anchorTop = anchor?.getBoundingClientRect().top;
   const items = timelineItems().filter(visibleItem), parts = [];
-  if (S.view === 'favorites' && !S.favoriteAuthor) {
+  const openItem = S.openId ? timelineItems().find(it => it.id === S.openId && bucketOf(it) !== 'destroyed') : null;
+  if (S.openId && !openItem) S.openId = '';
+  if (openItem) {
+    // 帖子详情：正文 + 评论单独成页，时间线只留评论入口，避免评论把每张卡片撑长。
+    parts.push(`<div class="detail-bar"><button class="back" data-back-detail aria-label="返回列表">${icon('back')}</button>${avatarTag(openItem.author_name, openItem.author_key || openItem.author_name)}<span class="name">${esc(openItem.author_name || '')}</span><span class="grow"></span><button class="act" data-action="more" data-id="${esc(openItem.id)}" aria-label="更多操作">${icon('more')}</button></div>`);
+    parts.push(card(openItem, true));
+    const comments = openItem.comments || [];
+    parts.push(comments.length
+      ? `<section class="cmts"><div class="cmts-head">评论 · ${comments.length}</div>${comments.map(c => `<div class="cmt">${avatarTag(c.user, c.user)}<div class="cmt-body"><div class="cmt-name">${esc(c.user)}${c.author ? '（作者）' : ''}</div><div class="cmt-text">${esc(c.text)}</div></div></div>`).join('')}</section>`
+      : '<div class="empty">这条帖子没有评论</div>');
+  } else if (S.view === 'favorites' && !S.favoriteAuthor) {
     const groups = new Map();
     for (const it of items) {
       const group = groups.get(it.author_key) || { name: it.author_name, count: 0, latest: '' };
@@ -660,34 +824,41 @@ function render() {
     }
     if (!selected.length) parts.push('<div class="empty">当前筛选下暂无帖子</div>');
   }
-  const next = nextDate(), remaining = S.view === 'favorites' ? unresolvedFavorites().length : 0;
-  const message = S.loadError ? S.loadError : S.loading ? '正在加载更早内容…' : next ? S.loadPaused ? '已扫描多天，暂未找到足够内容；可继续查找' : '向下滑动加载更早内容' : remaining ? `已查找全部可用日期，${remaining} 条收藏正文尚未找到（可能尚未推送或历史 feed 缺失）` : S.view === 'favorites' ? '收藏正文已加载' : '已到最早日期';
-  parts.push(`<div class="load-tail" id="load-tail" role="status">${esc(message)}${S.loading ? '<button data-load-pause>暂停加载</button>' : next || S.loadError ? '<button data-load-more>继续加载 / 重试</button>' : ''}</div>`);
+  if (!openItem) {
+    const next = nextDate(), remaining = S.view === 'favorites' ? unresolvedFavorites().length : 0;
+    const message = S.loadError ? S.loadError : S.loading ? '正在加载更早内容…' : next ? S.loadPaused ? '已扫描多天，暂未找到足够内容；可继续查找' : '向下滑动加载更早内容' : remaining ? `已查找全部可用日期，${remaining} 条收藏正文尚未找到（可能尚未推送或历史 feed 缺失）` : S.view === 'favorites' ? '收藏正文已加载' : '已到最早日期';
+    parts.push(`<div class="load-tail" id="load-tail" role="status">${esc(message)}${S.loading ? '<button data-load-pause>暂停加载</button>' : next || S.loadError ? '<button data-load-more>继续加载 / 重试</button>' : ''}</div>`);
+  }
   paint(parts);
   for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === S.view));
   if (window.scrollTo) {
     const replacement = anchor && [...document.querySelectorAll('.card')].find(el => el.dataset.id === anchor.dataset.id);
     window.scrollTo(0, replacement ? y + replacement.getBoundingClientRect().top - anchorTop : y);
   }
-  updateStatus(); observeEnds(); observeMore();
+  updateStatus(); observeEnds(); observeMore(); renderSheet();
 }
-function card(it) {
+function card(it, detail = false) {
+  const id = esc(it.id);
+  const water = bucketOf(it) === 'water', favorite = !!readingItem(it.id).favorite, read = isRead(it.id);
   const quotes = (it.quotes || []).map(x => `<div class="quote">${x.nick ? '@' + esc(x.nick) + '：' : ''}${esc(x.text)}</div>`).join('');
   const chain = it.chain ? `<blockquote>${esc(it.chain)}</blockquote>` : '';
-  const cm = (it.comments || []).length ? `<div class="cmts">${it.comments.map(c => `<div><b>${esc(c.user)}${c.author ? '（作者）' : ''}</b>：${esc(c.text)}</div>`).join('')}</div>` : '';
-  const text = (it.text || '').split(/\n{2,}/).map(t => `<p>${esc(t)}</p>`).join('');
-  const water = bucketOf(it) === 'water', favorite = !!readingItem(it.id).favorite;
-  return `<article class="card" data-id="${esc(it.id)}">
-    ${text}${quotes}${chain}${cm}
-    <footer>
-      <div><strong class="author-name">${esc(it.author_name || '')}</strong> · ${esc(it._date || S.date)} ${esc(it.time)} · ${esc(it.platform)} · <a href="${safeUrl(it.url)}" target="_blank" rel="noreferrer">原文</a> · <span class="read-label">${isRead(it.id) ? '已读' : '未读'}</span></div>
-      <div class="actions">
-        ${water ? '' : `<button class="favorite" data-action="favorite" aria-pressed="${favorite}">${favorite ? '取消收藏' : '收藏'}</button>`}
-        <button data-action="bucket">${water ? '捞回干货' : '删除到水贴'}</button>
-        ${water ? '<button class="danger" data-action="destroy">永久销毁</button>' : ''}
-      </div>
-    </footer>
-    <div class="sentinel" data-end="${esc(it.id)}" aria-hidden="true"></div>
+  const comments = it.comments || [];
+  const paras = (it.text || '').split(/\n{2,}/).filter(t => t.trim()).map(t => `<p>${esc(t)}</p>`).join('');
+  // 作者头行对齐雪球：头像 + 名称 + 平台 / 时间 + 已读；详情页作者已在返回条，头行只留元信息。
+  const meta = `<span class="meta">${platTag(it)}${esc(whenLabel(it))}</span><span class="read-label">${read ? '已读' : '未读'}</span>`;
+  const head = detail
+    ? `<div class="head">${meta}</div>`
+    : `<div class="head">${avatarTag(it.author_name, it.author_key || it.author_name)}<span class="name">${esc(it.author_name || '')}</span>${meta}</div>`;
+  // 帖底四键对齐雪球：分享 / 评论 / 收藏 / 更多。水贴不提供收藏：收藏视图只展示干货。
+  const actions = `<div class="actions">
+      <button class="act" data-action="share" aria-label="分享原文链接">${icon('share')}<span>分享</span></button>
+      ${detail ? '' : `<button class="act" data-open="${id}" aria-label="查看 ${comments.length} 条评论">${icon('comment')}<span>评论</span><span class="count">${comments.length}</span></button>`}
+      ${water ? '' : `<button class="act" data-action="favorite" aria-pressed="${favorite}" aria-label="${favorite ? '取消收藏' : '收藏'}">${icon('star')}<span>${favorite ? '已收藏' : '收藏'}</span></button>`}
+      <button class="act more-btn" data-action="more" data-id="${id}" aria-label="更多操作">${icon('more')}</button>
+    </div>`;
+  return `<article class="card${detail ? ' detail' : ''}" data-id="${id}">
+    ${head}${paras ? `<div class="body">${paras}</div>` : ''}${quotes}${chain}${actions}
+    <div class="sentinel" data-end="${id}" aria-hidden="true"></div>
   </article>`;
 }
 
@@ -735,8 +906,8 @@ function markRead(id, read) {
   if (!changeReading(id, 'read_at', read ? new Date().toISOString() : null)) return;
   // 不重建 DOM，不移除未读视图正在读的卡片。
   for (const el of document.querySelectorAll('.card')) if (el.dataset.id === id) {
-    el.querySelector('.read-label').textContent = read ? '已读' : '未读';
-
+    const label = el.querySelector('.read-label');
+    if (label) label.textContent = read ? '已读' : '未读';
   }
   for (const [el, rec] of ends) if (el.dataset.end === id) {
     clearTimeout(rec.timer); if (endObserver) endObserver.unobserve(el); ends.delete(el);
@@ -755,7 +926,7 @@ function checkVisibleEnds() {
 let moreObserver = null;
 function observeMore() {
   moreObserver?.disconnect(); moreObserver = null;
-  if (S.loading || S.busy || S.loadPaused || S.loadError || !nextDate()) return;
+  if (S.openId || S.loading || S.busy || S.loadPaused || S.loadError || !nextDate()) return;
   if ('IntersectionObserver' in window) {
     moreObserver = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting) && document.visibilityState === 'visible') void loadMore(false);
@@ -820,7 +991,7 @@ async function fetchDay(date, refresh = false) {
 }
 async function loadDay(date) {
   if (S.busy || S.loading || !date) return;
-  persistLocal(); stopObserving(); S.heldRead.clear();
+  persistLocal(); stopObserving(); S.heldRead.clear(); S.openId = ''; S.sheetId = '';
   S.date = date; S.busy = true; S.offline = false; S.loadedDates = [date];
   S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.scanEmpty = 0;
   const cached = S.store.days[date] || { feed: null, picks: '', pending: {} };
@@ -864,7 +1035,7 @@ async function loadMore(initial = false) {
 }
 async function switchView(view) {
   if (S.busy || S.loading) return toast('正在加载或保存，请稍候，或暂停加载');
-  rememberPosition(); persistLocal(); S.filters[S.view] = S.readFilter; S.view = view;
+  rememberPosition(); persistLocal(); S.filters[S.view] = S.readFilter; S.view = view; S.openId = ''; S.sheetId = '';
   S.readFilter = S.filters[view] || 'all'; $('#read-filter').value = S.readFilter; S.heldRead.clear();
   const position = S.positions[positionKey()];
   if (view !== 'favorites' && position?.date) {
@@ -926,7 +1097,7 @@ async function save() {
 }
 async function deliver() {
   if (S.busy || S.loading || !S.feed) return;
-  if (S.dirty) return toast('先点击「保存全部」确认决策，再投递');
+  if (S.dirty) return toast('先点击顶部「保存」确认决策，再投递');
   if (!confirm(`仅投递 ${S.date} 的已确认干货到清洗队列？不会投递其他已加载日期；桌面仍受影子模式保护，投递不等于完成归档。`)) return;
   S.busy = true; updateStatus();
   try {
@@ -1039,11 +1210,12 @@ async function boot() {
 /* ---------------------------------------------------------------- 事件 / 启动 */
 $('#dates').onchange = e => {
   if (S.busy || S.loading) { e.target.value = S.date; return toast('正在处理，请稍候或暂停加载'); }
-  rememberPosition(); preserveDraft(); S.positions[positionKey()] = null;
+  rememberPosition(); preserveDraft(); S.positions[positionKey()] = null; closeMenu();
   if (window.scrollTo) window.scrollTo(0, 0);
   void loadDay(e.target.value);
 };
 $('#refresh').onclick = async () => {
+  closeMenu();
   void checkRelease(); void ensureShellWorker(true);
   if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
   preserveDraft();
@@ -1059,21 +1231,28 @@ $('#refresh').onclick = async () => {
     await switchView('favorites');
   } else await loadDay(S.dates[0] || S.date);
 };
-$('#update-shell').onclick = refreshToNewVersion;
+$('#update-shell').onclick = () => { closeMenu(); return refreshToNewVersion(); };
 $('#login-update-shell').onclick = refreshToNewVersion;
 $('#save').onclick = save;
-$('#queue').onclick = deliver;
-$('#fullscreen').onclick = fullscreen; // 必须由点击触发，绝不在开页时请求。
+$('#queue').onclick = () => { closeMenu(); return deliver(); };
+$('#fullscreen').onclick = () => { closeMenu(); return fullscreen(); }; // 必须由点击触发，绝不在开页时请求。
 for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => { void switchView(b.dataset.view); };
 $('#read-filter').onchange = e => {
   if (S.busy || S.loading) { e.target.value = S.readFilter; return toast('正在处理，请稍候或暂停加载'); }
   S.readFilter = e.target.value; S.heldRead.clear(); S.loadPaused = false; S.scanEmpty = 0;
-  render(); void loadMore(true);
+  closeMenu(); render(); void loadMore(true);
 };
 $('#main').addEventListener('click', e => {
   const control = e.target.closest('button'); if (!control) return;
   if (control.dataset.loadPause !== undefined) { S.cancelLoad = true; return; }
   if (control.dataset.loadMore !== undefined) { S.loadPaused = false; S.scanEmpty = 0; void loadMore(true); return; }
+  // 详情页打开 / 返回、分享与「更多」弹窗只是导航或只读动作，加载中也允许，避免自动加载时点不动。
+  if (control.dataset.open !== undefined) { openDetail(control.dataset.open); return; }
+  if (control.dataset.backDetail !== undefined) { closeDetail(); return; }
+  const b = e.target.closest('button[data-action]');
+  const id = b ? (b.dataset.id || b.closest('.card')?.dataset.id || S.openId || '') : '';
+  if (b && b.dataset.action === 'share') { const it = timelineItems().find(it => it.id === id); if (it) void sharePost(it); return; }
+  if (b && b.dataset.action === 'more') { openSheet(id); return; }
   if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
   if (control.dataset.author !== undefined) {
     rememberPosition(); S.favoriteAuthor = control.dataset.author; render(); restorePosition(); return;
@@ -1081,21 +1260,34 @@ $('#main').addEventListener('click', e => {
   if (control.dataset.backAuthors !== undefined) {
     rememberPosition(); S.favoriteAuthor = ''; render(); restorePosition(); return;
   }
-  const b = e.target.closest('button[data-action]'); if (!b) return;
-  const id = b.closest('.card').dataset.id, action = b.dataset.action;
+  if (!b) return;
+  applyAction(b.dataset.action, id);
+});
+// 更多弹窗：点选项或遮罩 / 取消关闭；水贴 / 销毁走与卡片相同的动作。
+$('#sheet').addEventListener('click', e => {
+  const t = e.target;
+  if (t && t.id === 'sheet-mask') { closeSheet(); return; }
+  const b = t && t.closest ? t.closest('button') : null;
+  if (!b) return;
+  if (b.dataset.sheetClose !== undefined) { closeSheet(); return; }
+  const action = b.dataset.sheetAction; if (!action) return;
+  const id = S.sheetId; closeSheet();
+  if (action === 'open') { const it = timelineItems().find(it => it.id === id); if (it) openExternal(it.url); return; }
+  applyAction(action, id);
+});
+function applyAction(action, id) {
+  if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
   const it = timelineItems().find(it => it.id === id); if (!it || bucketOf(it) === 'destroyed') return;
   if (action === 'favorite' && bucketOf(it) === 'good') {
     S.undo = { id, field: 'favorite', value: !!readingItem(id).favorite };
     changeReading(id, 'favorite', !readingItem(id).favorite);
-  }
-  if (action === 'bucket') {
+  } else if (action === 'bucket') {
     S.undo = { id, field: 'bucket', value: bucketOf(it) };
     changeReading(id, 'bucket', bucketOf(it) === 'water' ? 'good' : 'water');
-  }
-  if (action === 'destroy') {
-    if (!confirm('永久销毁这条水贴？同步后在所有日期和收藏中永不展示，不能恢复；原始业务文件不会删除。')) return;
+  } else if (action === 'destroy') {
+    if (!confirm('永久销毁这条帖子？同步后在所有日期和收藏中永不展示，不能恢复；原始业务文件不会删除。')) return;
     S.undo = null; changeReading(id, 'bucket', 'destroyed');
-  }
+  } else return;
   render();
   if (['favorite', 'bucket'].includes(action) && S.undo) {
     toast(action === 'favorite' ? (readingItem(id).favorite ? '已收藏' : '已取消收藏') : (bucketOf(it) === 'water' ? '已移到水贴' : '已捞回干货'), 5000);
@@ -1109,9 +1301,17 @@ $('#main').addEventListener('click', e => {
       };
       $('#toast').appendChild(button);
     }
-  } else if (action === 'destroy') toast('已永久隐藏；保存全部后同步到其他设备');
-});
+  } else if (action === 'destroy') toast('已永久隐藏；点击顶部保存后同步到其他设备');
+}
 window.addEventListener('pagehide', persistLocal);
+// 桌面按 Esc 收起菜单 / 更多弹窗；手机端靠点遮罩或取消。
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); closeSheet(); } });
+// 菜单是原生 <details>，点菜单以外的地方收起，避免遮住正文。
+document.addEventListener('click', e => {
+  const more = $('#more');
+  if (!more || !more.open || (e.target.closest && e.target.closest('.more'))) return;
+  more.open = false;
+});
 window.addEventListener('beforeunload', e => {
   persistLocal();
   if (S.dirty || draftDates().length || S.readingDirty || S.storageError) { e.preventDefault(); e.returnValue = ''; }
