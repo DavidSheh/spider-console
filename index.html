@@ -35,7 +35,22 @@ button:focus-visible,summary:focus-visible,select:focus-visible{outline:2px soli
 .badge{font-size:11px;color:var(--dim);white-space:nowrap}
 .badge.dirty{color:#fbbf24}
 .badge.ok{color:var(--ok)}
-#save{padding:5px 10px;white-space:nowrap}
+/* 顶部固定三态：可同步 / 同步中 / 已同步。文字长度一致、宽度固定，避免状态切换造成阅读位移。 */
+.sync-pill{flex:none;width:76px;padding:5px 4px;text-align:center;white-space:nowrap;font-size:12.5px;font-weight:600;border-radius:9px;border:1px solid var(--line);background:var(--card2)}
+.sync-pill:before{content:"";display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;vertical-align:1px;background:currentColor}
+.sync-pill.pending{color:#f59e0b;border-color:#7c5a12}
+.sync-pill.syncing{color:#60a5fa;border-color:#1e4a80}
+.sync-pill.synced{color:#22c55e;border-color:#1c5a37}
+.sync-mini{flex:none;padding:4px 8px;font-size:11.5px;font-weight:600;border-radius:8px;border:1px solid var(--line);background:transparent}
+.sync-mini.pending{color:#f59e0b}.sync-mini.syncing{color:#60a5fa}.sync-mini.synced{color:#22c55e}
+.sync-detail{padding:4px 2px 8px;font-size:13px;line-height:1.7;color:var(--dim)}
+.sync-detail b{color:var(--fg);font-weight:600}
+.sync-detail .conflict{margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card2);color:var(--fg);font-size:12.5px}
+.sync-detail .conflict code{color:var(--accent);word-break:break-all}
+.sync-detail .conflict button{margin:6px 6px 0 0;padding:6px 10px}
+.sync-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.sync-actions button{flex:1;min-width:120px}
+@media(prefers-reduced-motion:reduce){.sheet-panel{animation:none}}
 .more{position:relative;font-size:13px}
 .more summary{cursor:pointer;list-style:none;width:32px;height:30px;display:grid;place-items:center;color:var(--dim);border-radius:8px}
 .more summary::-webkit-details-marker{display:none}
@@ -115,7 +130,7 @@ main{max-width:760px;margin:0 auto}
 .sheet-item[disabled]{opacity:.4}
 .sheet-cancel{display:block;width:100%;margin-top:18px;padding:14px;background:var(--chip);border:0;border-radius:12px;font-size:15px;font-weight:600}
 @media(min-width:600px){main{padding:0 12px}.card{border:1px solid var(--line);border-radius:14px;margin:14px 0;padding:16px 18px 4px}.cmts{border:1px solid var(--line);border-radius:14px;margin:0 0 14px;padding:0 18px 16px}.detail-bar{margin:0 -12px}.author-entry{border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:14px 16px}}
-@media(max-width:360px){.tabs{gap:12px}.tabs button{font-size:15px}#state{display:none}}
+@media(max-width:360px){.tabs{gap:12px}.tabs button{font-size:15px}.sync-pill{width:64px;font-size:11.5px;padding:5px 2px}}
 </style>
 </head>
 <body>
@@ -128,22 +143,22 @@ main{max-width:760px;margin:0 auto}
         <button data-view="favorites" aria-pressed="false">收藏</button>
       </nav>
       <span class="grow"></span>
-      <button class="primary" id="save" hidden>保存</button>
-      <span id="state" class="badge" aria-live="polite">加载中</span>
+      <button id="state" class="sync-pill pending" aria-live="polite" aria-label="同步状态：可同步" title="同步状态与详情">可同步</button>
       <details class="more" id="more">
         <summary aria-label="更多操作" title="更多操作"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></summary>
         <div class="menu">
           <div id="stat" class="sub"></div>
+          <button id="confirm">确认筛选结果</button>
           <select id="dates" aria-label="跳到某天" title="跳到某天，从这一天向前阅读"></select>
           <select id="read-filter" aria-label="已读过滤">
             <option value="all">已读过滤：全部</option><option value="read">已读过滤：已读</option><option value="unread">已读过滤：未读</option>
           </select>
           <button id="refresh">刷新信息流</button>
-          <button id="queue">投递所选日期的清洗</button>
+          <button id="queue">确认所选日期并投递清洗</button>
           <div id="build-version" class="sub"></div>
           <button id="update-shell" hidden>刷新到新版</button>
           <button id="fullscreen">全屏阅读</button>
-          <div class="hint">收藏只是标记，不等于归档。投递仍受桌面影子模式保护。</div>
+          <div class="hint">阅读和收藏自动同步；归档仍需明确确认。投递仍受桌面影子模式保护。</div>
         </div>
       </details>
     </div>
@@ -160,10 +175,23 @@ main{max-width:760px;margin:0 auto}
     <button class="sheet-cancel" data-sheet-close="1">取消</button>
   </div>
 </div>
+<div class="sheet-wrap" id="sync-sheet" hidden>
+  <div class="sheet-mask" data-sync-close="1"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="同步详情">
+    <div class="sync-detail" id="sync-detail"></div>
+    <div class="sync-actions">
+      <button id="sync-now">立即同步 / 重试</button>
+      <button id="sync-export">导出待同步</button>
+      <button id="sync-import">从文件恢复</button>
+    </div>
+    <input type="file" id="sync-import-file" accept="application/json,.json" hidden>
+    <button class="sheet-cancel" data-sync-close="1">关闭</button>
+  </div>
+</div>
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = '9cfda9b6d9468948';
+const BUILD_VERSION = 'b18f04fdb74cce27';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -176,6 +204,19 @@ const LS = { cfg: 'spider.cfg', auth: 'spider.auth' };
 const $ = s => document.querySelector(s);
 const emptyReading = () => ({ version: 1, items: {} });
 const emptyStore = () => ({ dates: [], lastDate: '', days: {}, reading: emptyReading(), readingDirty: false });
+// 自动同步参数：3s 防抖、15s 最长等待、10 个帖子提前触发、批次最少间隔 5s、请求 20s 超时。
+// 这些是上线前的调优起点，不是性能实测结论。
+const SYNC = Object.freeze({
+  debounce: 3000, maxWait: 15000, batchThreshold: 10, minGap: 5000,
+  timeout: 20000, checkThrottle: 30000,
+  backoff: [5000, 15000, 30000, 60000, 120000],
+});
+const OUTBOX_OP_PREFIX = 'spider.op.v1.', OUTBOX_INDEX_PREFIX = 'spider.outbox.v1.', SYNC_META_PREFIX = 'spider.sync.v1.';
+const AUTO_SYNC_NOTICE_KEY = 'spider.autosync.notice.v1';
+function emptySyncMeta() {
+  return { version: 1, lastSyncAt: '', lastCheckAt: 0, backoffUntil: 0, backoffStep: 0,
+    errorKind: '', error: '', blocked: '', conflicts: {}, migrated: false, counter: 0 };
+}
 const S = {
   cfg: { owner: 'davidsheh', repo: 'spider', branch: '', provider: 'gitee' }, token: '', pin: null,
   dates: [], date: '', feed: null, keep: new Map(), pending: {}, reading: emptyReading(),
@@ -183,6 +224,11 @@ const S = {
   view: 'good', readFilter: 'all', heldRead: new Set(), storageError: false,
   loadedDates: [], loading: false, loadError: '', loadPaused: false, scanEmpty: 0,
   favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null, openId: '', sheetId: '',
+  // 自动同步：outbox 是待上传的字段级操作，conflicts 是两端同字段分歧（保留双方，不静默丢弃）。
+  outbox: new Map(), conflicts: new Map(), remote: emptyReading(), syncMeta: emptySyncMeta(),
+  syncState: { running: false, queued: false, timer: 0, maxTimer: 0, retryTimer: 0, storeTimer: 0,
+    lastBatchAt: 0, firstDirtyAt: 0, activeOps: new Set(), writeBusy: false, gen: 0,
+    checked: false, notified: false, startedAt: 0, channel: null },
 };
 const INITIAL_ITEMS = 20, SCAN_DAYS = 7;
 
@@ -205,17 +251,159 @@ function b64dec(b64) {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const scopeKey = () => 'spider.reader.v1.' + JSON.stringify([S.cfg.provider, S.cfg.owner, S.cfg.repo, S.cfg.branch || '']);
+
+/* 本机第一道防线：每个待同步操作独立一条记录（独立 key），避免整份 outbox 数组最后写入者覆盖前者。
+   索引只是加速恢复；真实浏览器会同时扫描同 scope 前缀的 key，索引丢失也不丢操作。 */
+const opScopePrefix = (scope = scopeKey()) => OUTBOX_OP_PREFIX + scope + '.';
+const opStorageKey = (opId, scope = scopeKey()) => opScopePrefix(scope) + opId;
+const outboxIndexKey = (scope = scopeKey()) => OUTBOX_INDEX_PREFIX + scope;
+const syncMetaStorageKey = (scope = scopeKey()) => SYNC_META_PREFIX + scope;
+function storageKeys() {
+  const out = [];
+  try {
+    if (typeof localStorage.length === 'number' && typeof localStorage.key === 'function')
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k) out.push(k); }
+  } catch (e) { /* 枚举不可用：退回索引。 */ }
+  return out;
+}
+function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function safeSet(key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } }
+function safeRemove(key) { try { localStorage.removeItem(key); return true; } catch (e) { return false; } }
+let opSeq = 0;
+function newOpId() {
+  opSeq++;
+  let rnd = '';
+  try { const b = new Uint8Array(6); crypto.getRandomValues(b); rnd = [...b].map(x => x.toString(16).padStart(2, '0')).join(''); }
+  catch (e) { rnd = Date.now().toString(16); }
+  return 'op-' + Date.now().toString(36) + '-' + opSeq.toString(36) + '-' + rnd;
+}
+function nextVersion() { const n = Math.max(Date.now(), (S.syncMeta.counter || 0) + 1); S.syncMeta.counter = n; return n; }
+function validStamp(value) { return !!utcStamp(value); }
+function validOp(op, scope = scopeKey()) {
+  if (!op || typeof op !== 'object' || typeof op.op !== 'string' || !op.op) return false;
+  if (op.scope && op.scope !== scope) return false;
+  if (!validId(op.id) || !(op.field in FIELDS)) return false;
+  if (!validStamp(op.stamp)) return false;
+  if (op.field === 'bucket' && !['good', 'water', 'destroyed'].includes(op.value)) return false;
+  if (op.field === 'favorite' && typeof op.value !== 'boolean') return false;
+  if (op.field === 'read_at' && op.value !== null && !validStamp(op.value)) return false;
+  return true;
+}
+function readOutboxIndex(scope = scopeKey()) {
+  const ids = new Set();
+  try { const raw = safeGet(outboxIndexKey(scope)); if (raw) for (const id of JSON.parse(raw)) ids.add(id); } catch (e) { }
+  for (const key of storageKeys()) if (key.startsWith(opScopePrefix(scope))) ids.add(key.slice(opScopePrefix(scope).length));
+  return ids;
+}
+function writeOutboxIndex(scope = scopeKey()) {
+  const ids = [...S.outbox.keys()];
+  safeSet(outboxIndexKey(scope), JSON.stringify(ids));
+}
+function writeStoredOp(op) {
+  const ok = safeSet(opStorageKey(op.op, op.scope || scopeKey()), JSON.stringify(op));
+  if (ok) writeOutboxIndex(op.scope || scopeKey());
+  return ok;
+}
+function removeStoredOp(opId) {
+  const op = S.outbox.get(opId);
+  S.outbox.delete(opId);
+  if (op) safeRemove(opStorageKey(opId, op.scope || scopeKey()));
+  writeOutboxIndex(op?.scope || scopeKey());
+  S.readingDirty = S.outbox.size > 0;
+}
+function loadSyncMeta(scope = scopeKey()) {
+  const meta = emptySyncMeta();
+  try {
+    const raw = JSON.parse(safeGet(syncMetaStorageKey(scope)) || 'null');
+    if (raw && typeof raw === 'object') Object.assign(meta, raw, { conflicts: raw.conflicts && typeof raw.conflicts === 'object' ? raw.conflicts : {} });
+  } catch (e) { }
+  return meta;
+}
+function persistSyncMeta() {
+  S.syncMeta.conflicts = Object.fromEntries(S.conflicts);
+  safeSet(syncMetaStorageKey(), JSON.stringify(S.syncMeta));
+}
+function persistIndex() { writeOutboxIndex(); }
+function markStorageError() {
+  S.storageError = true;
+  toast('本机暂存失败：离开页面可能丢失改动，请立即同步或导出待同步记录。', 6000);
+}
+function applyOpToReading(op) {
+  const item = Object.assign({}, readingItem(op.id));
+  const time = FIELDS[op.field];
+  if (op.field === 'bucket' && item.bucket === 'destroyed' && op.value !== 'destroyed') return;
+  if ((Date.parse(item[time]) || 0) > Date.parse(op.stamp)) return;
+  item[op.field] = op.value; item[time] = op.stamp; S.reading.items[op.id] = item;
+}
+function enqueueOp(fields) {
+  const scope = scopeKey(), version = nextVersion(), at = new Date().toISOString();
+  let existing = null;
+  for (const o of S.outbox.values())
+    if (o.id === fields.id && o.field === fields.field && !S.syncState.activeOps.has(o.op)) { existing = o; break; }
+  const op = existing ? Object.assign({}, existing) : { op: newOpId(), at, base: fields.base || null };
+  op.scope = scope; op.id = fields.id; op.field = fields.field; op.value = fields.value; op.stamp = fields.stamp;
+  op.version = version;
+  if (!op.base && fields.base) op.base = fields.base;
+  if (fields.recovered) op.recovered = true;
+  S.outbox.set(op.op, op);
+  const saved = writeStoredOp(op);
+  if (!saved) markStorageError(); else if (S.storageError) S.storageError = false;
+  S.readingDirty = S.outbox.size > 0;
+  broadcastSync();
+  noteSyncChange();
+  return saved;
+}
+function restoreOutbox() {
+  S.outbox = new Map(); S.conflicts = new Map();
+  S.syncMeta = loadSyncMeta();
+  for (const id of readOutboxIndex()) {
+    try { const op = JSON.parse(safeGet(opStorageKey(id)) || 'null'); if (validOp(op)) S.outbox.set(op.op, op); } catch (e) { }
+  }
+  for (const [key, value] of Object.entries(S.syncMeta.conflicts || {})) {
+    if (value && typeof value === 'object' && validId(value.id) && value.field in FIELDS) S.conflicts.set(key, value);
+  }
+  for (const op of S.outbox.values()) applyOpToReading(op);
+  S.readingDirty = S.outbox.size > 0;
+  if (!S.syncMeta.migrated) migrateLegacyReading();
+  writeOutboxIndex();
+}
+// 旧版本只有“整份 reading 脏”这一个标记；没有细粒度操作时保守生成恢复批次，缺少冲突基线则按时间戳合并，不伪造基线。
+function migrateLegacyReading() {
+  let failed = false;
+  if (S.store.readingDirty && !S.outbox.size) {
+    for (const [id, row] of Object.entries(S.reading.items)) for (const field of Object.keys(FIELDS)) {
+      if (!(field in row) || !validStamp(row[FIELDS[field]])) continue;
+      const op = { op: newOpId(), scope: scopeKey(), id, field, value: row[field], stamp: row[FIELDS[field]],
+        version: nextVersion(), at: new Date().toISOString(), base: null, recovered: true };
+      S.outbox.set(op.op, op);
+      // 批量迁移：索引最后写一次，避免 O(n²) 次索引写入。
+      if (!safeSet(opStorageKey(op.op), JSON.stringify(op))) failed = true;
+    }
+    writeOutboxIndex();
+    S.readingDirty = S.outbox.size > 0;
+  }
+  // 迁移中途失败时保留 migrated=false，下次打开继续重试，而不是把未落地的操作当成已完成。
+  if (!failed) S.syncMeta.migrated = true;
+  persistSyncMeta();
+}
 function restoreLocal() {
   S.store = emptyStore();
   try {
     const saved = JSON.parse(localStorage.getItem(scopeKey()) || 'null');
     if (saved) S.store = Object.assign(emptyStore(), saved);
     S.reading = mergeReading(emptyReading(), S.store.reading);
-    S.readingDirty = !!S.store.readingDirty;
-  } catch (e) { S.reading = emptyReading(); S.readingDirty = false; toast('本机缓存无法读取，未使用损坏数据', 5000); }
+  } catch (e) { S.reading = emptyReading(); toast('本机缓存无法读取，未使用损坏数据', 5000); }
   S.date = ''; S.feed = null; S.keep = new Map(); S.pending = {}; S.dirty = false;
   S.loadedDates = []; S.positions = {}; S.filters = {}; S.favoriteAuthor = ''; S.view = 'good'; S.readFilter = 'all';
   S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.openId = ''; S.sheetId = '';
+  // 切仓 / 重新启动：取消旧调度与旧请求代次，旧回调不得写入新 scope。
+  S.syncState.gen++;
+  clearTimeout(S.syncState.timer); clearTimeout(S.syncState.maxTimer); clearTimeout(S.syncState.retryTimer);
+  S.syncState.running = false; S.syncState.queued = false; S.syncState.activeOps = new Set(); S.syncState.writeBusy = false;
+  S.syncState.firstDirtyAt = 0; S.syncState.checked = false; S.syncState.notified = false;
+  try { S.syncState.channel?.close(); } catch (e) { }
+  S.syncState.channel = null;
+  restoreOutbox();
 }
 function persistLocal() {
   if (unsafeHttp()) return false; // 不安全启动未恢复 store，不能在 pagehide 时用空值覆盖旧 HTTP 草稿。
@@ -231,6 +419,36 @@ function persistLocal() {
 function preserveDraft() {
   if (persistLocal() && (S.dirty || S.readingDirty)) toast('未同步改动已保存在本机，切换或刷新不会丢失；决策仍待明确确认', 5000);
 }
+function scheduleStorePersist() {
+  clearTimeout(S.syncState.storeTimer);
+  S.syncState.storeTimer = setTimeout(() => { S.syncState.storeTimer = 0; persistLocal(); }, 800);
+}
+function broadcastSync() {
+  try { S.syncState.channel?.postMessage({ type: 'spider-sync', gen: S.syncState.gen }); } catch (e) { }
+}
+function reconcileOutboxFromStorage() {
+  if (S.storageError) return; // 本机写入不可靠时以内存队列为准，避免把未落地的操作删掉。
+  const scope = scopeKey(), next = new Map();
+  for (const id of readOutboxIndex(scope)) {
+    try { const op = JSON.parse(safeGet(opStorageKey(id, scope)) || 'null'); if (validOp(op, scope)) next.set(op.op, op); } catch (e) { }
+  }
+  let added = false;
+  for (const [id, op] of next) if (!S.outbox.has(id)) { S.outbox.set(id, op); applyOpToReading(op); added = true; }
+  for (const id of [...S.outbox.keys()]) if (!next.has(id)) S.outbox.delete(id);
+  // 他端发现的冲突也同步显示（不覆盖本页已有选择）。
+  for (const [key, value] of Object.entries(loadSyncMeta(scope).conflicts || {}))
+    if (value && validId(value.id) && value.field in FIELDS && !S.conflicts.has(key)) S.conflicts.set(key, value);
+  S.readingDirty = S.outbox.size > 0;
+  if (added) { persistLocal(); updateStatus(); scheduleSync(0); }
+}
+function ensureSyncChannel() {
+  if (S.syncState.channel || typeof BroadcastChannel === 'undefined') return;
+  try {
+    S.syncState.channel = new BroadcastChannel('spider-sync:' + scopeKey());
+    S.syncState.channel.onmessage = () => reconcileOutboxFromStorage();
+  } catch (e) { S.syncState.channel = null; }
+}
+
 
 /* ---------------------------------------------------------------- 空壳版本：无凭据检查，只能显式刷新；不触碰业务同步 */
 const U = { available: '', checking: null, registering: null, registration: null, updating: null, refreshing: false, swProblem: '' };
@@ -345,10 +563,10 @@ function waitForVersionWorker(reg, version) {
   });
 }
 function refreshBlocked() {
-  if (S.busy || S.loading) { toast('正在处理，请稍后刷新新版'); return true; }
+  if (S.busy || S.loading || S.syncState.running) { toast('正在处理或同步中，请稍后刷新新版'); return true; }
   const pending = Object.keys(S.pending).length || Object.values(S.store.days).some(day => Object.keys(day.pending || {}).length);
   if (S.dirty || S.readingDirty || S.storageError || pending) {
-    toast('请先确认保存所有日期的决策草稿、同步阅读状态，并解决本机存储错误，再刷新新版', 6500); return true;
+    toast('请先确认所有日期的决策草稿、等自动同步完成并解决本机存储错误，再刷新新版', 6500); return true;
   }
   return false;
 }
@@ -387,11 +605,59 @@ function apiUrl(p) {
 function apiHeaders() {
   return S.cfg.provider === 'gitee' ? {} : { Authorization: 'Bearer ' + S.token, Accept: 'application/vnd.github+json' };
 }
+// 业务请求统一 20s 超时：超时只能说明“结果未知”，不能证明服务器未写入；下一轮先 GET 核对。
+async function fetchTimed(url, opts = {}) {
+  let controller = null, timer = 0;
+  try {
+    if (typeof AbortController === 'function') {
+      controller = new AbortController();
+      opts = Object.assign({}, opts, { signal: controller.signal });
+    }
+    const call = fetch(url, opts);
+    if (!controller) return await call;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        try { controller.abort(); } catch (e) { }
+        const e = new Error('请求超时，结果未知'); e.kind = 'timeout'; reject(e);
+      }, SYNC.timeout);
+    });
+    return await Promise.race([call, timeout]);
+  } catch (e) {
+    if (e && e.kind) throw e;
+    const err = new Error(e && e.message ? e.message : '网络请求失败');
+    err.kind = 'network'; throw err;
+  } finally { if (timer) clearTimeout(timer); }
+}
+function retryAfterMs(res) {
+  try {
+    const get = res && res.headers && typeof res.headers.get === 'function' ? k => res.headers.get(k) : null;
+    if (!get) return 0;
+    const ra = get('retry-after');
+    if (ra) { const n = Number(ra); if (Number.isFinite(n)) return Math.max(0, n * 1000); const t = Date.parse(ra); if (Number.isFinite(t)) return Math.max(0, t - Date.now()); }
+    const reset = get('x-ratelimit-reset');
+    if (reset) { const t = Number(reset) * 1000; if (Number.isFinite(t)) return Math.max(0, t - Date.now()); }
+  } catch (e) { }
+  return 0;
+}
+function responseError(status, path, res, action = '读取') {
+  const e = new Error(`${action}失败 ${status} ${path}`);
+  e.status = status;
+  if (status === 401) e.kind = 'auth';
+  else if (status === 403) {
+    const wait = retryAfterMs(res);
+    const remaining = res?.headers?.get?.('x-ratelimit-remaining');
+    if (wait || remaining === '0') { e.kind = 'rate'; e.retryAfter = wait; } else e.kind = 'auth';
+  } else if (status === 429) { e.kind = 'rate'; e.retryAfter = retryAfterMs(res); }
+  else if (status >= 500) e.kind = 'server';
+  else if (status === 409 || status === 422) e.kind = 'conflict';
+  else e.kind = 'http';
+  return e;
+}
 async function apiGet(path) {
-  const r = await fetch(apiUrl(path), { cache: 'no-store', headers: apiHeaders() });
+  const r = await fetchTimed(apiUrl(path), { cache: 'no-store', headers: apiHeaders() });
   if (r.status === 404) return null;
-  if (!r.ok) throw new Error(`读取失败 ${r.status} ${path}`);
-  return r.json();
+  if (!r.ok) throw responseError(r.status, path, r);
+  try { return await r.json(); } catch (e) { const err = new Error(`读取失败：${path} 返回的不是 JSON`); err.kind = 'corrupt'; throw err; }
 }
 // Gitee 的 contents 接口对不存在的路径返回 200 + []（不是 404），目录也是数组。
 // 若把 [] 当文件读，content 就是 undefined，atob('undefined') 会抛
@@ -414,19 +680,26 @@ async function apiPut(path, text, message, sha) {
   if (sha) body.sha = sha;
   if (S.cfg.branch) body.branch = S.cfg.branch;
   if (S.cfg.provider === 'gitee') body.access_token = S.token;
-  const send = method => fetch(apiUrl(path), { method, headers: Object.assign({ 'Content-Type': 'application/json' }, apiHeaders()), body: JSON.stringify(body) });
+  const send = method => fetchTimed(apiUrl(path), { method, headers: Object.assign({ 'Content-Type': 'application/json' }, apiHeaders()), body: JSON.stringify(body) });
   // Gitee 新建文件是 POST /contents/{path}，PUT 只用于更新（需 sha）；GitHub 一律 PUT。
   const create = !sha && S.cfg.provider === 'gitee';
   let r = await send(create ? 'POST' : 'PUT');
   if (create && (r.status === 404 || r.status === 405)) r = await send('PUT'); // 没有 POST 路由时退回 PUT。
-  if (r.ok) return r.json();
-  if (r.status === 409 || r.status === 422) return { conflict: true };
-  throw new Error(`写入失败 ${r.status}`);
+  if (r.ok) { try { return await r.json(); } catch (e) { return {}; } }
+  if (r.status === 409) return { conflict: true };
+  if (r.status === 422) {
+    // 422 不全是 sha 冲突：读 provider 错误，只在像 sha 不匹配时才当冲突重试。
+    let messageText = '';
+    try { const j = await r.json(); messageText = JSON.stringify(j); } catch (e) { }
+    if (!messageText || /sha|conflict|does not match|已被修改/i.test(messageText)) return { conflict: true };
+    const err = responseError(422, path, r, '写入'); err.kind = 'validation'; throw err;
+  }
+  throw responseError(r.status, path, r, '写入');
 }
 async function putWithRetry(path, build, message) {
   for (let i = 0; i < 2; i++) {
     const cur = fileEntry(await apiGet(path), path);
-    if (cur && !cur.sha) throw new Error(`${path} 远端条目缺少 sha，未覆盖远端`);
+    if (cur && !cur.sha) { const e = new Error(`${path} 远端条目缺少 sha，未覆盖远端`); e.kind = 'corrupt'; throw e; }
     const remoteText = cur ? fileText(cur, path) : '';
     const text = build(remoteText);
     // 内容与远端逐字节相同时不写：Gitee 的 contents 接口对相同内容也落一个提交，
@@ -437,7 +710,7 @@ async function putWithRetry(path, build, message) {
     if (!res.conflict) return res;
     if (i === 0) await sleep(300);
   }
-  throw new Error('仓库刚被别处改过，改动仍在本机，请再试');
+  const e = new Error('仓库刚被别处改过，改动仍在本机，请再试'); e.kind = 'conflict'; throw e;
 }
 
 /* ---------------------------------------------------------------- 阅读协议：字段独立 LWW；销毁是永久 tombstone */
@@ -491,14 +764,30 @@ function sameReading(a, b) {
 }
 const readingItem = id => S.reading.items[id] || {};
 const isRead = id => !!readingItem(id).read_at;
+const fieldValue = (reading, id, field) => { const row = reading?.items?.[id]; return row && field in row ? row[field] : undefined; };
+const conflictKey = (id, field) => id + '|' + field;
+function remoteField(id, field) {
+  const row = S.remote?.items?.[id];
+  if (!row || !(field in row)) return null;
+  return { value: row[field], stamp: row[FIELDS[field]], present: true };
+}
+function baselineFor(id, field, previous) {
+  const remote = remoteField(id, field);
+  if (remote) return remote;
+  if (previous && field in previous) return { value: previous[field], stamp: previous[FIELDS[field]], present: true };
+  return null;
+}
 function changeReading(id, field, value) {
   if (!validId(id) || (field === 'bucket' && readingItem(id).bucket === 'destroyed')) return false;
   const item = Object.assign({}, readingItem(id));
   if (item[field] === value) return false;
   const time = FIELDS[field];
   const stamp = new Date(Math.max(Date.now(), (Date.parse(item[time]) || 0) + 1)).toISOString();
+  const base = baselineFor(id, field, item);
   item[field] = field === 'read_at' && value !== null ? stamp : value;
-  item[time] = stamp; S.reading.items[id] = item; S.readingDirty = true;
+  item[time] = stamp; S.reading.items[id] = item;
+  // 先持久化独立操作记录，再视为可恢复的待同步任务；不重写整份正文缓存。
+  enqueueOp({ id, field, value: item[field], stamp, base });
   if (field === 'bucket') {
     if (allItems().some(it => it.id === id) || S.keep.has(id)) S.pending[id] = value === 'good';
     // 只为实际操作生成草稿；仅加载或从远端读到状态，不确认未审核日期。
@@ -509,7 +798,7 @@ function changeReading(id, field, value) {
     }
     S.dirty = Object.keys(S.pending).length > 0;
   }
-  persistLocal(); updateStatus(); return true;
+  scheduleStorePersist(); updateStatus(); return true;
 }
 
 /* ---------------------------------------------------------------- picks：只 patch 改过的 id；保留远端未知行 */
@@ -552,12 +841,49 @@ function draftDates() {
 }
 function confirmedUTC8(now = new Date()) { return new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 19) + '+08:00'; }
 function isConfirmed(text) { return /^#[ \t]*confirmed:[ \t]*\S[^\n]*$/m.test(text || ''); }
+function textHash(text) {
+  // 与 scripts/picks.py 的 _text_hash 一致：两个 32 位滚动哈希拼成 16 位十六进制，输入按 UTF-16 码元遍历。
+  let h1 = 0x811c9dc5, h2 = 0x1000193;
+  const s = String(text == null ? '' : text);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+  }
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+}
+const DECISIONS_RE = /^#[ \t]*decisions:[ \t]*(d1-[0-9a-f]{16})[ \t]*$/m;
+function decisionDigestOf(text) { const m = (text || '').match(DECISIONS_RE); return m ? m[1] : ''; }
+// 只覆盖显式桶决策（含时间戳，覆盖改走又改回的 ABA），收藏 / 已读不参与；排序后摘要不依赖字段顺序。
+function decisionDigest(feed, decisions, remoteText = '') {
+  const ids = new Set();
+  for (const p of feed?.people || []) for (const it of p.items) ids.add(it.id);
+  for (const id of parsePicks(remoteText).keys()) ids.add(id);
+  const rows = [...ids].sort().map(id => {
+    const row = decisions ? decisions.get(id) : readingItem(id);
+    const bucket = row && row.bucket ? row.bucket : '';
+    const stamp = row && row.bucket_updated_at ? row.bucket_updated_at : '';
+    return id + '\t' + bucket + '\t' + stamp;
+  });
+  return 'd1-' + textHash(rows.join('\n'));
+}
+function freezeDecisions(feed) {
+  // 冻结整个阅读状态的显式桶决策（而不只是当前 feed），使旧 picks 里多出的历史行也能稳定参与摘要。
+  const map = new Map();
+  for (const [id, row] of Object.entries(S.reading.items))
+    map.set(id, { bucket: row.bucket || null, bucket_updated_at: row.bucket_updated_at || '' });
+  for (const p of feed?.people || []) for (const it of p.items)
+    if (!map.has(it.id)) map.set(it.id, { bucket: null, bucket_updated_at: '' });
+  return map;
+}
 function buildPicks(day, total, remote = '', context = null) {
   const feed = context ? context.feed : S.feed;
   const pending = context ? context.pending : S.pending;
+  const decisions = context?.decisions || null;
+  const decisionOf = id => decisions ? (decisions.get(id) || {}) : readingItem(id);
   const items = (feed?.people || []).flatMap(p => p.items);
   const keepItem = it => {
-    const state = readingItem(it.id);
+    const state = decisionOf(it.id);
     if (state.bucket) return state.bucket === 'good';
     if (typeof pending[it.id] === 'boolean') return pending[it.id];
     const choice = parsePicks(remote).get(it.id);
@@ -572,7 +898,7 @@ function buildPicks(day, total, remote = '', context = null) {
     const m = out[i].trim().match(RE_ROW); if (!m) continue;
     const id = m[2]; seen.add(id);
     let keep = pending[id];
-    const state = readingItem(id);
+    const state = decisionOf(id);
     if (state.bucket && items.some(it => it.id === id)) keep = state.bucket === 'good';
     if (state.bucket === 'destroyed') keep = false;
     if (typeof keep === 'boolean') out[i] = out[i].replace(/^(\s*- \[)[ xX](\])/, (_, a, b) => a + (keep ? 'x' : ' ') + b);
@@ -584,10 +910,343 @@ function buildPicks(day, total, remote = '', context = null) {
     const summary = (it.summary || '').replace(/[\r\n]/g, ' ').slice(0, 60);
     out.push(`- [${keepItem(it) ? 'x' : ' '}] ${it.id} · ${p.name.replace(/[\r\n]/g, ' ')} · ${it.cat || '09_其他'} · t${it.topic ?? '-'}/s${it.signal ?? '-'} · ${summary}`);
   }
-  // 消除旧 confirmed 头，固定 UTC+8，与手机系统时区无关。
-  const lines = out.filter(line => !/^#[ \t]*confirmed:/.test(line));
-  lines.splice(lines[0]?.startsWith('# ') ? 1 : 0, 0, '# confirmed: ' + confirmedUTC8());
+  // 消除旧 confirmed / decisions 头，固定 UTC+8（与手机系统时区无关），并记录本次确认的桶决策快照摘要。
+  const digest = decisionDigest(feed, decisions, remote);
+  const lines = out.filter(line => !/^#[ \t]*(?:confirmed|decisions):/.test(line));
+  const at = lines[0]?.startsWith('# ') ? 1 : 0;
+  lines.splice(at, 0, '# confirmed: ' + confirmedUTC8(), '# decisions: ' + digest);
   return lines.join('\n') + '\n';
+}
+
+/* ---------------------------------------------------------------- 自动同步调度：防抖 + 最长等待 + 阈值 + 串行写入 + 退避
+   只监听状态变化与生命周期事件，不轮询正文；无改动不写远端，不制造空提交。 */
+function syncStatus() {
+  if (S.syncState.running) return 'syncing';
+  if (S.storageError || S.outbox.size > 0 || S.conflicts.size > 0 || S.syncMeta.blocked ||
+      (!S.syncMeta.lastSyncAt && !S.syncState.checked)) return 'pending';
+  return 'synced';
+}
+function syncLabel() { const s = syncStatus(); return s === 'syncing' ? '同步中' : s === 'synced' ? '已同步' : '可同步'; }
+function noteSyncChange() {
+  if (!S.syncState.firstDirtyAt) S.syncState.firstDirtyAt = Date.now();
+  scheduleSync(SYNC.debounce);
+  const posts = new Set([...S.outbox.values()].map(o => o.id));
+  if (posts.size >= SYNC.batchThreshold) scheduleSync(Math.max(0, SYNC.minGap - (Date.now() - S.syncState.lastBatchAt)));
+  updateStatus();
+}
+function scheduleSync(delay) {
+  if (S.syncState.running) { S.syncState.queued = true; return; }
+  clearTimeout(S.syncState.timer);
+  const wait = Math.max(0, delay == null ? SYNC.debounce : delay);
+  S.syncState.timer = setTimeout(() => { S.syncState.timer = 0; void requestSync('debounce'); }, wait);
+  if (!S.syncState.firstDirtyAt) S.syncState.firstDirtyAt = Date.now();
+  // 连续操作从第一笔待同步改动起最多等待 15s，不被后续操作不断延期。
+  clearTimeout(S.syncState.maxTimer);
+  const remain = Math.max(0, S.syncState.firstDirtyAt + SYNC.maxWait - Date.now());
+  S.syncState.maxTimer = setTimeout(() => { S.syncState.maxTimer = 0; void requestSync('deadline', { force: true }); }, remain);
+}
+function scheduleRetryAt(ms) {
+  clearTimeout(S.syncState.retryTimer);
+  S.syncState.retryTimer = setTimeout(() => { S.syncState.retryTimer = 0; void requestSync('retry'); }, Math.max(0, ms));
+}
+async function requestSync(reason, opts = {}) {
+  if (S.syncState.running) { S.syncState.queued = true; return false; }
+  if (!S.token) { updateStatus(); return false; }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) { S.offline = true; S.syncMeta.errorKind = 'network'; updateStatus(); return false; }
+  const now = Date.now();
+  if (S.syncMeta.blocked) {
+    // 权限 / 数据损坏 / 校验失败阻塞不能被普通重试或生命周期事件绕过；只有用户明确重试才可再试。
+    const retryable = opts.force && ['auth', 'network', 'server', 'timeout'].includes(S.syncMeta.blocked);
+    if (!retryable) { updateStatus(); return false; }
+  }
+  if (S.syncMeta.backoffUntil > now && !(opts.force && ['network', 'timeout', 'server', 'conflict'].includes(S.syncMeta.errorKind))) {
+    scheduleRetryAt(S.syncMeta.backoffUntil - now); updateStatus(); return false;
+  }
+  if (!opts.force && now - S.syncState.lastBatchAt < SYNC.minGap) { scheduleSync(SYNC.minGap - (now - S.syncState.lastBatchAt)); return false; }
+  if (document.visibilityState === 'hidden' && !opts.background) { updateStatus(); return false; }
+  return runSyncBatch(opts);
+}
+async function withWriteLock(fn) {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+  if (locks && typeof locks.request === 'function') return locks.request('spider-write:' + scopeKey(), fn);
+  if (S.syncState.writeBusy) { const e = new Error('另一个写入任务正在进行'); e.kind = 'busy'; throw e; }
+  S.syncState.writeBusy = true;
+  try { return await fn(); } finally { S.syncState.writeBusy = false; }
+}
+async function runSyncBatch(opts = {}) {
+  if (S.syncState.running) {
+    S.syncState.queued = true;
+    if (opts.throwOnError) throw new Error('同步进行中，请稍后重试');
+    return false;
+  }
+  const gen = S.syncState.gen, scope = scopeKey();
+  const snapshot = [...S.outbox.values()].map(o => Object.assign({}, o));
+  S.syncState.running = true; S.syncState.startedAt = Date.now(); S.syncState.activeOps = new Set(snapshot.map(o => o.op));
+  updateStatus();
+  let ok = false;
+  try {
+    ok = await withWriteLock(() => syncBatchInner(scope, gen, snapshot));
+    if (ok && gen === S.syncState.gen && scope === scopeKey()) {
+      S.syncState.lastBatchAt = Date.now(); S.syncState.firstDirtyAt = 0; S.syncState.checked = true;
+      clearTimeout(S.syncState.maxTimer); S.syncState.maxTimer = 0;
+      S.syncMeta.error = ''; S.syncMeta.errorKind = ''; S.syncMeta.blocked = ''; S.syncMeta.backoffUntil = 0; S.syncMeta.backoffStep = 0;
+      if (!S.outbox.size) { S.offline = false; S.syncState.notified = false; }
+      persistSyncMeta();
+    }
+  } catch (e) {
+    if (gen === S.syncState.gen && scope === scopeKey()) handleSyncError(e);
+    if (opts.throwOnError) throw e;
+  } finally {
+    S.syncState.running = false; S.syncState.activeOps = new Set(); S.syncState.startedAt = 0;
+    updateStatus();
+    if (S.syncState.queued) { S.syncState.queued = false; scheduleSync(Math.max(0, SYNC.minGap - (Date.now() - S.syncState.lastBatchAt))); }
+  }
+  return ok;
+}
+function classifyOutbox(remote) {
+  const groups = new Map();
+  for (const op of S.outbox.values()) {
+    const key = conflictKey(op.id, op.field);
+    if (!groups.has(key)) groups.set(key, { id: op.id, field: op.field, ops: [], base: null });
+    const g = groups.get(key); g.ops.push(op);
+    if (!g.base && op.base) g.base = op.base;
+  }
+  const conflicts = new Map();
+  for (const [key, g] of groups) {
+    const remoteRow = remote.items[g.id] || {};
+    g.local = fieldValue(S.reading, g.id, g.field);
+    g.remote = fieldValue(remote, g.id, g.field);
+    g.remotePresent = g.field in remoteRow;
+    if (g.field === 'bucket' && g.remote === 'destroyed') { g.drop = true; continue; } // 销毁墓碑无条件胜出。
+    if (g.local === g.remote) { g.converged = true; continue; }
+    if (g.field === 'read_at' && g.local !== null && g.local !== undefined && g.remote) { g.converged = true; continue; }
+    if (!g.base) continue; // 缺少基线：按时间戳合并，不伪造冲突。
+    if (!g.remotePresent) continue; // 远端没有该字段：本地值按时间戳写入。
+    if (g.remote === g.base.value) continue; // 远端相对基线未变。
+    const c = { id: g.id, field: g.field, local: g.local ?? null, localStamp: (S.reading.items[g.id] || {})[FIELDS[g.field]] || '',
+      remote: g.remote ?? null, remoteStamp: remoteRow[FIELDS[g.field]] || '', base: g.base, at: new Date().toISOString() };
+    conflicts.set(key, c); g.conflict = true;
+  }
+  return { groups, conflicts };
+}
+function readingForMerge(conflicts) {
+  if (!conflicts.size) return S.reading;
+  const copy = JSON.parse(JSON.stringify(S.reading));
+  for (const c of conflicts.values()) {
+    const row = copy.items[c.id]; if (!row) continue;
+    delete row[c.field]; delete row[FIELDS[c.field]];
+    if (!Object.keys(row).length) delete copy.items[c.id];
+  }
+  return copy;
+}
+function ackOps(ops, merged, conflicts) {
+  for (const op of ops) {
+    const key = conflictKey(op.id, op.field);
+    if (conflicts.has(key) || S.conflicts.has(key)) continue;
+    const cur = S.reading.items[op.id] || {};
+    const same = cur[op.field] === op.value && cur[FIELDS[op.field]] === op.stamp;
+    const newer = [...S.outbox.values()].some(o => o.op !== op.op && o.id === op.id && o.field === op.field && o.version > op.version);
+    const destroyed = (merged.items[op.id] || {}).bucket === 'destroyed';
+    const mergedValue = fieldValue(merged, op.id, op.field);
+    const won = op.field === 'read_at' ? true : mergedValue === op.value;
+    if ((same && won) || newer || destroyed) removeStoredOp(op.op);
+  }
+}
+function detectLostIntent(ops, merged, conflicts, before) {
+  for (const op of ops) {
+    if (!S.outbox.has(op.op) || conflicts.has(conflictKey(op.id, op.field)) || S.conflicts.has(conflictKey(op.id, op.field))) continue;
+    if (op.field === 'read_at') continue;
+    // 用合并前的本机值判断，避免被远端结果覆盖后误判“本机值已变”。
+    const local = before && before.has(op.op) ? before.get(op.op) : fieldValue(S.reading, op.id, op.field);
+    if (local !== op.value || op.value === undefined) continue;
+    const rv = fieldValue(merged, op.id, op.field);
+    if (rv === undefined || rv === op.value) continue;
+    // 本地值因时钟偏差等未能胜出：保留双方并提示，不静默丢掉本地意图。
+    S.conflicts.set(conflictKey(op.id, op.field), { id: op.id, field: op.field, local: op.value, localStamp: op.stamp,
+      remote: rv, remoteStamp: (merged.items[op.id] || {})[FIELDS[op.field]] || '', base: op.base, at: new Date().toISOString(), reason: 'clock' });
+  }
+}
+function applySynced(merged) {
+  S.remote = normalizeReading(merged);
+  S.reading = mergeReading(merged, S.reading); // 再叠加请求开始后产生的新补丁，不用旧响应覆盖新值。
+  S.syncMeta.lastSyncAt = new Date().toISOString(); S.syncMeta.lastCheckAt = Date.now();
+  reconcilePending();
+}
+function finishBatch(snapshot, merged, conflicts) {
+  const live = snapshot.map(o => S.outbox.get(o.op)).filter(Boolean);
+  const before = new Map(live.map(op => [op.op, fieldValue(S.reading, op.id, op.field)]));
+  applySynced(merged);
+  for (const [key, c] of [...S.conflicts]) {
+    const rv = fieldValue(S.remote, c.id, c.field);
+    if (rv === fieldValue(S.reading, c.id, c.field)) S.conflicts.delete(key);
+  }
+  ackOps(live, merged, conflicts);
+  detectLostIntent(live, merged, conflicts, before);
+  // 冲突字段保留本机值供用户选择；远端值已写入，本地 UI 不被静默改写。
+  for (const c of S.conflicts.values()) {
+    const row = Object.assign({}, S.reading.items[c.id]);
+    row[c.field] = c.local; row[FIELDS[c.field]] = c.localStamp; S.reading.items[c.id] = row;
+  }
+  persistSyncMeta(); persistLocal(); updateStatus(); broadcastSync();
+}
+async function syncBatchInner(scope, gen, snapshot) {
+  const path = 'data/state/reading_state.json';
+  const stale = () => { const e = new Error('请求已过期'); e.kind = 'stale'; return e; };
+  let lastError = null;
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    if (gen !== S.syncState.gen || scope !== scopeKey()) throw stale();
+    const entry = fileEntry(await apiGet(path), path);
+    if (entry && !entry.sha) { const e = new Error(`${path} 远端条目缺少 sha，未覆盖远端`); e.kind = 'corrupt'; throw e; }
+    const remoteText = entry ? fileText(entry, path) : '';
+    let remote;
+    try { remote = remoteText ? normalizeReading(JSON.parse(remoteText)) : emptyReading(); }
+    catch (e) { const err = new Error('远端 reading_state 损坏，已停止写入：' + e.message); err.kind = 'corrupt'; throw err; }
+    if (gen !== S.syncState.gen || scope !== scopeKey()) throw stale();
+    S.remote = remote;
+    if (!snapshot.length) adoptRemoteWithRecovery(remote); // 无本地改动：先采纳远端；若旧缓存还有未上传字段，本轮一并写入。
+    const active = snapshot.length ? snapshot : [...S.outbox.values()].map(o => Object.assign({}, o));
+    const { conflicts } = classifyOutbox(remote);
+    for (const [key, c] of [...S.conflicts]) {
+      const rv = fieldValue(remote, c.id, c.field);
+      if (rv === fieldValue(S.reading, c.id, c.field)) S.conflicts.delete(key);
+      else if (rv !== undefined) { c.remote = rv; c.remoteStamp = (remote.items[c.id] || {})[FIELDS[c.field]] || c.remoteStamp || ''; }
+    }
+    for (const [key, c] of conflicts) S.conflicts.set(key, c);
+    const local = readingForMerge(new Map([...S.conflicts, ...conflicts]));
+    const merged = mergeReading(remote, local);
+    const text = JSON.stringify(merged, null, 2) + '\n';
+    // 补丁已存在于远端：直接确认，不重复 PUT 制造提交。
+    if (entry && text === remoteText) { finishBatch(active, merged, conflicts); return true; }
+    const res = await apiPut(path, text, 'chore(reading): 手机阅读状态字段合并', entry ? entry.sha : '');
+    if (gen !== S.syncState.gen || scope !== scopeKey()) throw stale();
+    if (res && res.conflict) { lastError = Object.assign(new Error('远端在写入前被更新'), { kind: 'conflict' }); await sleep(300); continue; }
+    finishBatch(active, merged, conflicts);
+    return true;
+  }
+  throw lastError || Object.assign(new Error('共享仓库持续冲突，稍后重试'), { kind: 'conflict' });
+}
+// 无本地改动时的轻量核对：采纳远端，并把本地尚未上传的字段保守生成为恢复操作。
+function adoptRemoteWithRecovery(remote) {
+  const merged = mergeReading(remote, S.reading);
+  S.reading = merged; S.remote = remote;
+  for (const [id, row] of Object.entries(merged.items)) {
+    if (row.bucket === 'destroyed') continue; // 已销毁帖不再生成收藏 / 已读恢复操作。
+    const remoteRow = remote.items[id] || {};
+    for (const field of Object.keys(FIELDS)) {
+      if (!(field in row)) continue;
+      const remoteWins = field in remoteRow && Date.parse(remoteRow[FIELDS[field]]) >= Date.parse(row[FIELDS[field]]);
+      if (remoteWins) continue;
+      if ([...S.outbox.values()].some(o => o.id === id && o.field === field)) continue;
+      enqueueOp({ id, field, value: row[field], stamp: row[FIELDS[field]], base: field in remoteRow ? { value: remoteRow[field], stamp: remoteRow[FIELDS[field]], present: true } : null, recovered: true });
+    }
+  }
+  S.syncMeta.lastCheckAt = Date.now();
+  if (!S.outbox.size) S.syncMeta.lastSyncAt = new Date().toISOString();
+  S.syncState.checked = true;
+  S.readingDirty = S.outbox.size > 0;
+  persistSyncMeta(); persistLocal(); updateStatus();
+}
+function handleSyncError(e) {
+  const kind = e.kind || 'network', meta = S.syncMeta;
+  meta.error = e.message || String(e); meta.errorKind = kind;
+  // 失败后由退避控制重试，不用旧的 15s 截止时间反复触发。
+  S.syncState.firstDirtyAt = 0; clearTimeout(S.syncState.maxTimer); S.syncState.maxTimer = 0;
+  if (kind === 'auth') { meta.blocked = 'auth'; meta.backoffUntil = 0; }
+  else if (kind === 'corrupt') { meta.blocked = 'corrupt'; meta.backoffUntil = 0; }
+  else if (kind === 'validation') { meta.blocked = 'validation'; meta.backoffUntil = 0; }
+  else {
+    meta.blocked = '';
+    const now = Date.now();
+    if (kind === 'rate' && e.retryAfter) meta.backoffUntil = now + Math.max(1000, e.retryAfter);
+    else {
+      const step = Math.min(meta.backoffStep || 0, SYNC.backoff.length - 1);
+      const base = SYNC.backoff[step];
+      meta.backoffUntil = now + base + Math.round(base * 0.15 * Math.random());
+      meta.backoffStep = Math.min(step + 1, SYNC.backoff.length - 1);
+    }
+    if (kind === 'network' || kind === 'timeout' || kind === 'server') S.offline = true;
+    if (!S.syncState.notified) { S.syncState.notified = true; toast('同步暂未完成，改动已在本机，稍后自动重试：' + (e.message || '网络问题'), 5000); }
+    scheduleRetryAt(Math.max(0, meta.backoffUntil - Date.now()));
+  }
+  persistSyncMeta(); updateStatus();
+}
+async function checkRemote(opts = {}) {
+  if (S.outbox.size || S.conflicts.size || S.syncState.running) return false;
+  if (!S.token || S.syncMeta.blocked) return false;
+  if (!opts.force && Date.now() - (S.syncMeta.lastCheckAt || 0) < SYNC.checkThrottle) return false;
+  return runSyncBatch({ force: opts.force, check: true });
+}
+function resumeSync() {
+  if (S.syncState.running && S.syncState.startedAt && Date.now() - S.syncState.startedAt > SYNC.timeout + 5000) {
+    S.syncState.running = false; S.syncState.writeBusy = false; S.syncState.activeOps = new Set();
+  }
+  ensureSyncChannel();
+  reconcileOutboxFromStorage();
+  if (S.outbox.size) scheduleSync(0); else void checkRemote({});
+  updateStatus();
+}
+function outboxExport() {
+  return { kind: 'spider-outbox', version: 1,
+    scope: { provider: S.cfg.provider, owner: S.cfg.owner, repo: S.cfg.repo, branch: S.cfg.branch || '' },
+    ops: [...S.outbox.values()].map(({ op, id, field, value, stamp, base, version, at }) => ({ op, id, field, value, stamp, base, version, at })),
+    conflicts: [...S.conflicts.values()] };
+}
+function exportOutbox() {
+  const data = outboxExport();
+  const text = JSON.stringify(data, null, 2);
+  try {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = 'spider-outbox.json'; a.click();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) { } }, 1000);
+  } catch (e) { toast('导出失败，请复制以下内容：' + text.slice(0, 300), 8000); }
+  toast('待同步记录已导出（不含令牌 / PIN / 正文）', 4000);
+  return data;
+}
+function importOutbox(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { toast('导入失败：不是有效 JSON'); return false; }
+  if (!data || data.kind !== 'spider-outbox' || data.version !== 1) { toast('导入失败：格式或版本不支持'); return false; }
+  const s = data.scope || {};
+  if (s.provider !== S.cfg.provider || s.owner !== S.cfg.owner || s.repo !== S.cfg.repo || (s.branch || '') !== (S.cfg.branch || '')) {
+    toast('导入失败：属于另一个仓库范围'); return false;
+  }
+  let n = 0;
+  for (const raw of Array.isArray(data.ops) ? data.ops : []) {
+    const op = Object.assign({}, raw, { scope: scopeKey() });
+    if (!validOp(op)) continue;
+    const cur = S.outbox.get(op.op);
+    if (cur && cur.version >= op.version) continue;
+    S.outbox.set(op.op, op); writeStoredOp(op); applyOpToReading(op); n++;
+  }
+  for (const raw of Array.isArray(data.conflicts) ? data.conflicts : []) {
+    if (raw && validId(raw.id) && raw.field in FIELDS && !S.conflicts.has(conflictKey(raw.id, raw.field))) S.conflicts.set(conflictKey(raw.id, raw.field), raw);
+  }
+  S.readingDirty = S.outbox.size > 0; persistSyncMeta(); persistLocal(); updateStatus();
+  if (n) scheduleSync(0);
+  toast(n ? `已恢复 ${n} 个待同步字段` : '没有可导入的新记录');
+  return n > 0;
+}
+function resolveConflict(key, choice) {
+  const c = S.conflicts.get(key); if (!c) return;
+  const remoteRow = S.remote.items[c.id] || {};
+  const row = Object.assign({}, S.reading.items[c.id]);
+  S.conflicts.delete(key);
+  // 先清掉该字段的旧待同步操作，再按用户选择生成新决议（否则会把新操作一起删掉）。
+  for (const op of [...S.outbox.values()]) if (op.id === c.id && op.field === c.field) removeStoredOp(op.op);
+  if (choice === 'remote') {
+    if (c.field in remoteRow) { row[c.field] = remoteRow[c.field]; row[FIELDS[c.field]] = remoteRow[FIELDS[c.field]]; }
+    else { delete row[c.field]; delete row[FIELDS[c.field]]; }
+    if (Object.keys(row).length) S.reading.items[c.id] = row; else delete S.reading.items[c.id];
+  } else {
+    // 用户明确选择本机值：时间戳取 max(本机时钟, 已知双方时间戳 + 1)，避免明显时钟偏差下决议无法胜出。
+    const base = Math.max(Date.now(), (Date.parse(row[FIELDS[c.field]]) || 0) + 1,
+      c.remoteStamp ? (Date.parse(c.remoteStamp) || 0) + 1 : 0);
+    const stamp = new Date(base).toISOString();
+    row[c.field] = c.local; row[FIELDS[c.field]] = stamp; S.reading.items[c.id] = row;
+    enqueueOp({ id: c.id, field: c.field, value: c.local, stamp, base: c.field in remoteRow ? { value: remoteRow[c.field], stamp: remoteRow[FIELDS[c.field]], present: true } : null });
+  }
+  persistSyncMeta(); persistLocal(); updateStatus(); scheduleSync(0);
 }
 
 /* ---------------------------------------------------------------- 图标 / 头像：内联 SVG，无外部请求
@@ -691,30 +1350,67 @@ function closeDetail(fromHistory = false) {
 window.addEventListener('popstate', () => closeDetail(true));
 
 /* ---------------------------------------------------------------- 渲染：正文始终展开，作者置顶，操作只在帖尾 */
-function setState(text, cls) { const el = $('#state'); el.textContent = text; el.className = 'badge' + (cls ? ' ' + cls : ''); el.hidden = !text; }
+function setState() {
+  const el = $('#state'); if (!el) return;
+  const status = syncStatus(), label = syncLabel();
+  // aria-live 只在文字实际变化时更新，不播报每个重试倒计时。
+  if (el.textContent !== label) el.textContent = label;
+  el.className = 'sync-pill ' + status;
+  el.hidden = false;
+  el.setAttribute?.('aria-label', '同步状态：' + label);
+  const mini = $('#detail-state');
+  if (mini) { if (mini.textContent !== label) mini.textContent = label; mini.className = 'sync-mini ' + status; }
+}
 function updateStatus() {
   const drafts = draftDates(), processing = S.busy || S.loading;
   const notes = [];
-  if (S.storageError) notes.push('本机存储失败，刷新前请联网保存。');
-  if (S.offline) notes.push('正在使用本机缓存；联网后可刷新或重试。');
-  if (drafts.length) notes.push('待确认决策：' + drafts.join('、') + '；点击顶部「保存」。');
+  // 错误不能被三态藏掉：主标签只有三个，但异常用辅助告警持续说明。
+  if (S.storageError) notes.push('本机暂存失败，离开页面可能丢失；请立即同步或导出待同步记录。');
+  if (S.syncMeta.blocked === 'auth') notes.push('自动同步已暂停：令牌失效或权限不足，请重新授权。');
+  else if (S.syncMeta.blocked === 'corrupt') notes.push('远端阅读状态损坏或版本不受支持，已停止写入并保留本机数据。');
+  else if (S.syncMeta.blocked === 'validation') notes.push('写入被远端拒绝（校验失败），已停止自动重试。');
+  if (S.offline) notes.push('正在使用本机缓存；联网后会自动补齐同步。');
+  if (S.conflicts.size) notes.push(`有 ${S.conflicts.size} 个字段两端同时修改，已保留双方；点顶部同步状态处理。`);
   if (!('IntersectionObserver' in window)) notes.push('浏览器使用滚动检测自动已读；读到帖尾停留 1.5 秒。');
-  $('#notice').textContent = notes.join(' '); $('#notice').hidden = !notes.length;
+  const notice = $('#notice');
+  if (notice) { notice.textContent = notes.join(' '); notice.hidden = !notes.length; }
   const items = timelineItems();
-  $('#stat').textContent = `已加载 ${S.loadedDates.length || (S.feed ? 1 : 0)} 天 · ${items.filter(visibleItem).length} 条 · 待确认 ${drafts.length} 天。投递清洗仅针对跳转所选日期 ${S.date || ''}。`;
-  const unsaved = S.readingDirty || drafts.length > 0;
-  $('#save').disabled = processing || !unsaved;
-  // 没有待保存改动时保存按钮不占顶部；只有自动已读这种常规待同步也不重复显示状态条。
-  $('#save').hidden = !unsaved;
-  $('#save').textContent = drafts.length ? `保存 ${drafts.length} 天` : '保存';
-  $('#queue').disabled = processing || !S.feed;
-  $('#dates').hidden = S.view === 'favorites';
-  $('#queue').hidden = S.view === 'favorites';
+  const stat = $('#stat');
+  if (stat) stat.textContent = `已加载 ${S.loadedDates.length || (S.feed ? 1 : 0)} 天 · ${items.filter(visibleItem).length} 条 · 待确认 ${drafts.length} 天。投递清洗仅针对跳转所选日期 ${S.date || ''}。`;
+  const confirmBtn = $('#confirm');
+  if (confirmBtn) {
+    confirmBtn.disabled = processing || !drafts.length;
+    confirmBtn.textContent = drafts.length ? `确认筛选结果（${drafts.length} 天）` : '确认筛选结果';
+  }
+  const queue = $('#queue');
+  if (queue) { queue.disabled = processing || !S.feed; queue.hidden = S.view === 'favorites'; }
+  const dates = $('#dates'); if (dates) dates.hidden = S.view === 'favorites';
   // 帖子详情自带返回条，隐藏顶部控件把阅读面积让给正文与评论。
   $('#hdr').hidden = !!S.openId;
-  const label = processing ? '处理中' : S.storageError ? '存储失败' : drafts.length ? `待确认 ${drafts.length} 天` : S.offline ? '离线' : S.readingDirty ? '' : '已同步';
-  setState(label, drafts.length || S.storageError ? 'dirty' : label === '已同步' ? 'ok' : '');
+  setState();
 }
+function renderSyncSheet() {
+  const body = $('#sync-detail'); if (!body) return;
+  const pending = [...S.outbox.values()], posts = new Set(pending.map(o => o.id));
+  const lines = [];
+  lines.push(`<div><b>${esc(syncLabel())}</b> · ${pending.length ? `待同步 ${posts.size} 个帖子 / ${pending.length} 个字段` : '没有待上传的阅读状态'}</div>`);
+  lines.push(`<div>${S.syncMeta.lastSyncAt ? '上次同步：' + esc(new Date(S.syncMeta.lastSyncAt).toLocaleString()) : '尚未完成远端核对'}</div>`);
+  if (S.offline) lines.push('<div>当前离线；改动已保存在本机，联网后自动补齐。</div>');
+  if (S.storageError) lines.push('<div>本机暂存失败：请导出待同步记录并立即同步。</div>');
+  if (S.syncMeta.error) lines.push(`<div>${esc(S.syncMeta.blocked === 'auth' ? '需要重新授权：' : '原因：')}${esc(S.syncMeta.error)}</div>`);
+  if (S.syncMeta.backoffUntil > Date.now()) lines.push(`<div>下次自动重试：${esc(new Date(S.syncMeta.backoffUntil).toLocaleTimeString())}</div>`);
+  for (const [key, c] of S.conflicts) {
+    lines.push(`<div class="conflict">` +
+      `<div><code>${esc(c.id)}</code> · ${esc(c.field)} 两端同时修改</div>` +
+      `<div>本机：${esc(String(c.local))}${c.localStamp ? '（' + esc(c.localStamp) + '）' : ''}</div>` +
+      `<div>远端：${esc(String(c.remote ?? '（无）'))}${c.remoteStamp ? '（' + esc(c.remoteStamp) + '）' : ''}</div>` +
+      `<div><button data-conflict="${esc(key)}" data-choice="local">保留本机</button><button data-conflict="${esc(key)}" data-choice="remote">采用远端</button></div></div>`);
+  }
+  body.innerHTML = lines.join('');
+  const now = $('#sync-now'); if (now) now.disabled = S.syncState.running;
+}
+function openSyncSheet() { closeMenu(); renderSyncSheet(); const el = $('#sync-sheet'); if (el) el.hidden = false; }
+function closeSyncSheet() { const el = $('#sync-sheet'); if (el) el.hidden = true; }
 function knownAuthorKeys() {
   const names = new Map();
   for (const day of Object.values(S.store.days)) for (const p of day.feed?.people || []) {
@@ -796,7 +1492,7 @@ function render() {
   if (S.openId && !openItem) S.openId = '';
   if (openItem) {
     // 帖子详情：正文 + 评论单独成页，时间线只留评论入口，避免评论把每张卡片撑长。
-    parts.push(`<div class="detail-bar"><button class="back" data-back-detail aria-label="返回列表">${icon('back')}</button>${avatarTag(openItem.author_name, openItem.author_key || openItem.author_name)}<span class="name">${esc(openItem.author_name || '')}</span><span class="grow"></span><button class="act" data-action="more" data-id="${esc(openItem.id)}" aria-label="更多操作">${icon('more')}</button></div>`);
+    parts.push(`<div class="detail-bar"><button class="back" data-back-detail aria-label="返回列表">${icon('back')}</button>${avatarTag(openItem.author_name, openItem.author_key || openItem.author_name)}<span class="name">${esc(openItem.author_name || '')}</span><span class="grow"></span><button class="sync-mini ${syncStatus()}" id="detail-state" data-sync-open aria-label="同步状态">${syncLabel()}</button><button class="act" data-action="more" data-id="${esc(openItem.id)}" aria-label="更多操作">${icon('more')}</button></div>`);
     parts.push(card(openItem, true));
     const comments = openItem.comments || [];
     parts.push(comments.length
@@ -951,14 +1647,18 @@ window.addEventListener('resize', checkVisibleEnds);
 document.addEventListener('visibilitychange', () => {
   persistLocal();
   for (const [el, rec] of ends) armEnd(el, rec); // 隐藏清零，重新可见重新计时。
-  if (document.visibilityState === 'visible') { void checkRelease(); void ensureShellWorker(true); }
+  if (document.visibilityState === 'hidden') {
+    // 后台优先补一次；不承诺请求链在后台完整执行。
+    if (S.outbox.size) void requestSync('hidden', { background: true });
+  } else {
+    void checkRelease(); void ensureShellWorker(true); resumeSync();
+  }
 });
 
 /* ---------------------------------------------------------------- 加载：feed、picks、待确认选择与全局状态按仓库隔离 */
 function adoptReading(remote) {
-  const merged = mergeReading(remote, S.reading);
-  S.readingDirty = S.readingDirty || !sameReading(merged, remote);
-  S.reading = merged;
+  // 采纳远端；若本地还有未上传且更新更晚的字段，保守生成为待同步操作。
+  adoptRemoteWithRecovery(normalizeReading(remote));
 }
 function fillDates() {
   $('#dates').innerHTML = S.dates.map(d => `<option value="${d}">跳到 ${d}</option>`).join('') || '<option value="">无日期</option>';
@@ -1057,25 +1757,21 @@ async function switchView(view) {
 }
 
 /* ---------------------------------------------------------------- 保存全部：只确认已有决策草稿，阅读 / 收藏不产生确认 */
+// 明确确认前先把自动同步队列收敛：不确认 picks 就不写 confirmed，也不借机投递 / 归档。
 async function saveReadingState() {
-  let written = null;
-  await putWithRetry('data/state/reading_state.json', remote => {
-    const latest = remote ? JSON.parse(remote) : emptyReading();
-    written = mergeReading(latest, S.reading);
-    S.reading = mergeReading(written, emptyReading()); // 独立快照：PUT 期间新已读仍必须待同步。
-    reconcilePending(); persistLocal(); // 即使后续 PUT 失败，发现的远端销毁也不能丢。
-    return JSON.stringify(written, null, 2) + '\n';
-  }, 'chore(reading): 手机阅读状态字段合并');
-  const current = mergeReading(written, S.reading);
-  S.readingDirty = !sameReading(current, written); S.reading = current;
-  reconcilePending(); persistLocal();
+  const ok = await runSyncBatch({ force: true, throwOnError: true });
+  if (!ok) throw new Error('阅读状态同步未完成');
 }
-async function save() {
+async function save(datesArg, opts = {}) {
   if (S.busy || S.loading) return;
-  persistLocal(); const dates = draftDates();
-  if (!S.readingDirty && !dates.length) return toast('没有待保存改动；未操作日期不会自动确认');
-  const message = dates.length ? `同步全部阅读状态，并确认以下 ${dates.length} 天的待保存决策：\n${dates.join('、')}\n未操作日期不会确认；不会立即清洗或归档。` : '同步全部阅读 / 收藏状态；没有待保存决策，不会确认任何日期。';
-  if (!confirm(message)) return;
+  persistLocal();
+  // 可只确认所选日期（投递入口），默认确认所有缓存日期的非空草稿。
+  const dates = Array.isArray(datesArg)
+    ? datesArg.filter(date => { const day = S.store.days[date]; return day && Object.keys(day.pending || {}).length; })
+    : draftDates();
+  if (!S.readingDirty && !dates.length) return toast('没有待保存改动；阅读与收藏已自动同步，未操作日期不会自动确认');
+  const message = dates.length ? `确认以下 ${dates.length} 天的筛选结果：\n${dates.join('、')}\n只确认这些日期，不投递清洗；未操作日期不会确认。` : '同步阅读 / 收藏状态；没有待确认决策，不会确认任何日期。';
+  if (!opts.skipConfirm && !confirm(message)) return;
   S.busy = true; updateStatus(); moreObserver?.disconnect();
   const saved = [], failed = [];
   let readingSaved = false;
@@ -1084,11 +1780,12 @@ async function save() {
     for (const date of dates) {
       const day = S.store.days[date];
       const pending = Object.assign({}, day.pending);
+      const decisions = freezeDecisions(day.feed); // 冻结用户实际确认的决策快照，PUT 期间的新选择留到下一批。
       try {
         if (!day.feed) throw new Error('缺少该日正文，请先加载该日期再保存');
         let text = '';
         await putWithRetry(`daily/${date}/picks.md`, remote => {
-          text = buildPicks(date, day.feed.total || day.feed.people.reduce((n, p) => n + p.items.length, 0), remote, { feed: day.feed, pending });
+          text = buildPicks(date, day.feed.total || day.feed.people.reduce((n, p) => n + p.items.length, 0), remote, { feed: day.feed, pending, decisions });
           return text;
         }, `chore(picks): ${date} 手机端明确确认`);
         day.picks = text;
@@ -1099,21 +1796,37 @@ async function save() {
     }
     S.offline = failed.length > 0;
     reconcilePending(); persistLocal();
-    toast(failed.length ? `阅读状态已同步；决策成功 ${saved.length} 天，失败 ${failed.length} 天：${failed.join('；')}。失败草稿已保留，可重试。` : `阅读状态已同步${saved.length ? `；${saved.length} 天决策已确认保存` : '；没有确认任何日期'}${S.readingDirty ? '；保存期间的新已读仍待同步' : ''}`, 6500);
+    toast(failed.length ? `阅读状态已同步；决策成功 ${saved.length} 天，失败 ${failed.length} 天：${failed.join('；')}。失败草稿已保留，可重试。` : `阅读状态已同步${saved.length ? `；${saved.length} 天决策已确认保存` : '；没有确认任何日期'}${S.readingDirty ? '；保存期间的新改动仍待自动同步' : ''}`, 6500);
   } catch (e) {
     persistLocal(); toast(`${readingSaved ? '阅读状态已同步；' : '阅读状态同步失败，未确认任何决策；'}改动仍在本机：${e.message}`, 6500);
   } finally { S.busy = false; render(); }
 }
+
+async function deliverSelected() {
+  if (S.busy || S.loading || !S.feed) return;
+  const date = S.date, day = S.store.days[date];
+  if (day && Object.keys(day.pending || {}).length) {
+    if (!confirm(`确认 ${date} 的筛选结果并投递清洗？只处理这一天，其他日期的草稿保留。`)) return;
+    await save([date], { skipConfirm: true });
+    if (S.busy || S.dirty || Object.keys(S.store.days[date]?.pending || {}).length) return; // 确认失败则不投递
+  }
+  return deliver();
+}
 async function deliver() {
   if (S.busy || S.loading || !S.feed) return;
-  if (S.dirty) return toast('先点击顶部「保存」确认决策，再投递');
-  if (!confirm(`仅投递 ${S.date} 的已确认干货到清洗队列？不会投递其他已加载日期；桌面仍受影子模式保护，投递不等于完成归档。`)) return;
+  if (S.dirty) return toast('先在「更多 → 确认筛选结果」确认决策，再投递');
+  if (!confirm(`确认 ${S.date} 的筛选并投递已确认干货到清洗队列？仅处理这一天，不会投递其他已加载日期；桌面仍受影子模式保护，投递不等于完成归档。`)) return;
   S.busy = true; updateStatus();
   try {
     await saveReadingState();
     const text = fileText(await apiGet(`daily/${S.date}/picks.md`), `daily/${S.date}/picks.md`) || '';
     S.store.days[S.date].picks = text; S.keep = parsePicks(text); reconcilePending(); persistLocal();
-    if (S.dirty || !isConfirmed(text)) throw new Error('最新 picks 尚未确认或与桶状态不一致，请先确认并保存决策');
+    if (S.dirty || !isConfirmed(text)) throw new Error('最新 picks 尚未确认，请先确认并保存决策');
+    // 确认新鲜度：旧 confirmed 不能授权之后发生的桶决策变化（收藏 / 已读不影响）。
+    const expected = decisionDigest(S.feed, null, text);
+    const stamped = decisionDigestOf(text);
+    if (!stamped) throw new Error('这条确认缺少决策摘要（旧格式），请重新确认所选日期');
+    if (stamped !== expected) throw new Error('桶决策在确认后已变化，请重新确认所选日期');
     const selected = allItems().filter(it => bucketOf(it) === 'good' && S.keep.get(it.id) === true);
     let added = 0;
     await putWithRetry('data/state/clean_queue.json', remote => {
@@ -1206,13 +1919,22 @@ async function promptPin() {
   $('#f-pin').onkeydown = e => { if (e.key === 'Enter') go(); };
   $('#f-reset').onclick = e => { e.preventDefault(); localStorage.removeItem(LS.auth); location.reload(); };
 }
+function maybeExplainAutoSync() {
+  try { if (localStorage.getItem(AUTO_SYNC_NOTICE_KEY)) return; localStorage.setItem(AUTO_SYNC_NOTICE_KEY, '1'); }
+  catch (e) { return; }
+  setTimeout(() => toast('阅读和收藏会自动同步；归档仍需明确确认。', 6000), 800);
+}
 async function boot() {
   if (unsafeHttp()) return showHTTPSWarning();
   restoreLocal(); $('#hdr').hidden = false; renderBuildStatus();
+  ensureSyncChannel();
+  try { navigator.storage?.persist?.().catch(() => { }); } catch (e) { } // 尽力申请持久存储；拒绝不阻断阅读，也不当作绝对永久。
   try {
     await loadDates();
     if (!S.dates.length) { updateStatus(); $('#main').innerHTML = '<div class="empty">还没有 daily/ 或本机离线缓存</div>'; return; }
     await loadDay(S.dates[0]); // 默认从最新日期开始；历史草稿仍独立保留。
+    maybeExplainAutoSync();
+    if (S.outbox.size) scheduleSync(0); else void checkRemote({});
   } catch (e) { showLogin('未能读取仓库：' + e.message + '。本机缓存没有删除。'); }
 }
 
@@ -1242,9 +1964,26 @@ $('#refresh').onclick = async () => {
 };
 $('#update-shell').onclick = () => { closeMenu(); return refreshToNewVersion(); };
 $('#login-update-shell').onclick = refreshToNewVersion;
-$('#save').onclick = save;
-$('#queue').onclick = () => { closeMenu(); return deliver(); };
+const stateButton = $('#state'); if (stateButton) stateButton.onclick = () => openSyncSheet();
+const confirmButton = $('#confirm'); if (confirmButton) confirmButton.onclick = () => { closeMenu(); return save(); };
+$('#queue').onclick = () => { closeMenu(); return deliverSelected(); };
 $('#fullscreen').onclick = () => { closeMenu(); return fullscreen(); }; // 必须由点击触发，绝不在开页时请求。
+// 同步详情：立即同步 / 导出 / 导入 / 冲突选择；点遮罩或关闭按钮收起。
+const syncSheet = $('#sync-sheet');
+if (syncSheet) syncSheet.addEventListener('click', e => {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.syncClose !== undefined) { closeSyncSheet(); return; }
+  const b = t && t.closest ? t.closest('button') : null; if (!b) return;
+  if (b.dataset.conflict) { resolveConflict(b.dataset.conflict, b.dataset.choice); renderSyncSheet(); return; }
+});
+const syncNowButton = $('#sync-now'); if (syncNowButton) syncNowButton.onclick = () => { closeSyncSheet(); void requestSync('manual', { force: true }); };
+const syncExportButton = $('#sync-export'); if (syncExportButton) syncExportButton.onclick = () => { exportOutbox(); renderSyncSheet(); };
+const syncImportButton = $('#sync-import'); if (syncImportButton) syncImportButton.onclick = () => { const f = $('#sync-import-file'); if (f && f.click) f.click(); else toast('当前环境不支持文件选择，请直接粘贴 JSON 后调用导入'); };
+const syncImportFile = $('#sync-import-file'); if (syncImportFile) syncImportFile.onchange = async e => {
+  const file = e.target && e.target.files && e.target.files[0]; if (!file) return;
+  try { importOutbox(await file.text()); } catch (err) { toast('导入失败：' + err.message); }
+  closeSyncSheet();
+};
 for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => { void switchView(b.dataset.view); };
 $('#read-filter').onchange = e => {
   if (S.busy || S.loading) { e.target.value = S.readFilter; return toast('正在处理，请稍候或暂停加载'); }
@@ -1256,6 +1995,7 @@ $('#main').addEventListener('click', e => {
   if (control.dataset.loadPause !== undefined) { S.cancelLoad = true; return; }
   if (control.dataset.loadMore !== undefined) { S.loadPaused = false; S.scanEmpty = 0; void loadMore(true); return; }
   // 详情页打开 / 返回、分享与「更多」弹窗只是导航或只读动作，加载中也允许，避免自动加载时点不动。
+  if (control.dataset.syncOpen !== undefined) { openSyncSheet(); return; }
   if (control.dataset.open !== undefined) { openDetail(control.dataset.open); return; }
   if (control.dataset.backDetail !== undefined) { closeDetail(); return; }
   const b = e.target.closest('button[data-action]');
@@ -1294,6 +2034,7 @@ function applyAction(action, id) {
     S.undo = { id, field: 'bucket', value: bucketOf(it) };
     changeReading(id, 'bucket', bucketOf(it) === 'water' ? 'good' : 'water');
   } else if (action === 'destroy') {
+    if (S.storageError) return toast('本机暂存失败：为避免无法恢复，已禁止销毁；请先同步或导出待同步记录。');
     if (!confirm('永久销毁这条帖子？同步后在所有日期和收藏中永不展示，不能恢复；原始业务文件不会删除。')) return;
     S.undo = null; changeReading(id, 'bucket', 'destroyed');
   } else return;
@@ -1310,20 +2051,28 @@ function applyAction(action, id) {
       };
       $('#toast').appendChild(button);
     }
-  } else if (action === 'destroy') toast('已永久隐藏；点击顶部保存后同步到其他设备');
+  } else if (action === 'destroy') toast('已永久隐藏；在「更多 → 确认筛选结果」确认后同步到其他设备');
 }
-window.addEventListener('pagehide', persistLocal);
+// 生命周期：本地先落地；退后台 / 离页 / 恢复网络只补一次同步，不承诺后台一定完成。
+window.addEventListener('pagehide', () => { persistLocal(); if (S.outbox.size) void requestSync('pagehide', { background: true, force: true }); });
+window.addEventListener('blur', () => { persistLocal(); if (S.outbox.size) void requestSync('blur', { force: true }); });
+window.addEventListener('focus', () => resumeSync());
+window.addEventListener('pageshow', () => resumeSync());
+window.addEventListener('online', () => { S.offline = false; S.syncMeta.errorKind = ''; if (S.syncMeta.blocked) { updateStatus(); return; } scheduleSync(0); updateStatus(); });
+window.addEventListener('offline', () => { S.offline = true; updateStatus(); });
+window.addEventListener('storage', e => { if (e && e.key) reconcileOutboxFromStorage(); });
 // 桌面按 Esc 收起菜单 / 更多弹窗；手机端靠点遮罩或取消。
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); closeSheet(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); closeSheet(); closeSyncSheet(); } });
 // 菜单是原生 <details>，点菜单以外的地方收起，避免遮住正文。
 document.addEventListener('click', e => {
   const more = $('#more');
   if (!more || !more.open || (e.target.closest && e.target.closest('.more'))) return;
   more.open = false;
 });
+// 正常有本地保障时不每次弹离开确认；只有本机持久化失败才临时启用（手机上可能不触发）。
 window.addEventListener('beforeunload', e => {
   persistLocal();
-  if (S.dirty || draftDates().length || S.readingDirty || S.storageError) { e.preventDefault(); e.returnValue = ''; }
+  if (S.storageError) { e.preventDefault(); e.returnValue = ''; }
 });
 renderBuildStatus();
 (async function start() {
