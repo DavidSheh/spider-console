@@ -148,17 +148,16 @@ main{max-width:760px;margin:0 auto}
         <summary aria-label="更多操作" title="更多操作"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></summary>
         <div class="menu">
           <div id="stat" class="sub"></div>
-          <button id="confirm">确认筛选结果</button>
           <select id="dates" aria-label="跳到某天" title="跳到某天，从这一天向前阅读"></select>
           <select id="read-filter" aria-label="已读过滤">
             <option value="all">已读过滤：全部</option><option value="read">已读过滤：已读</option><option value="unread">已读过滤：未读</option>
           </select>
           <button id="refresh">刷新信息流</button>
-          <button id="queue">确认所选日期并投递清洗</button>
+          <button id="queue">投递所选日期的清洗</button>
           <div id="build-version" class="sub"></div>
           <button id="update-shell" hidden>刷新到新版</button>
           <button id="fullscreen">全屏阅读</button>
-          <div class="hint">阅读和收藏自动同步；归档仍需明确确认。投递仍受桌面影子模式保护。</div>
+          <div class="hint">阅读、收藏和筛选结果都会自动同步；归档仍受桌面影子模式保护。</div>
         </div>
       </details>
     </div>
@@ -191,7 +190,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = 'b18f04fdb74cce27';
+const BUILD_VERSION = 'a3a33f5e1ba9aa1a';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -204,18 +203,28 @@ const LS = { cfg: 'spider.cfg', auth: 'spider.auth' };
 const $ = s => document.querySelector(s);
 const emptyReading = () => ({ version: 1, items: {} });
 const emptyStore = () => ({ dates: [], lastDate: '', days: {}, reading: emptyReading(), readingDirty: false });
-// 自动同步参数：3s 防抖、15s 最长等待、10 个帖子提前触发、批次最少间隔 5s、请求 20s 超时。
-// 这些是上线前的调优起点，不是性能实测结论。
+// 自动同步策略：频率按「省流 / 标准 / 及时」三档，默认省流。手机实测原 3s/15s/10 帖过于频繁。
+// 数据量检测：待同步字段数、帖子数、整份状态字节数；超过上限 fail-closed，不盲写。
 const SYNC = Object.freeze({
-  debounce: 3000, maxWait: 15000, batchThreshold: 10, minGap: 5000,
-  timeout: 20000, checkThrottle: 30000,
-  backoff: [5000, 15000, 30000, 60000, 120000],
+  timeout: 20000,
+  backoff: [10000, 30000, 60000, 120000, 300000],
+  maxBytes: 1500000,       // 单次 reading_state 请求体上限（约 1.5MB）
+  maxOps: 400,             // 单批待同步字段上限
+  volumeWarnBytes: 800000, // 超过约 800KB 时自动拉长防抖，倾向合并成更大批次
 });
+const SYNC_POLICIES = Object.freeze({
+  relaxed: { label: '省流', debounce: 15000, maxWait: 120000, batchThreshold: 40, minGap: 60000, checkThrottle: 300000 },
+  standard: { label: '标准', debounce: 8000, maxWait: 60000, batchThreshold: 20, minGap: 30000, checkThrottle: 120000 },
+  fast: { label: '及时', debounce: 3000, maxWait: 15000, batchThreshold: 10, minGap: 5000, checkThrottle: 30000 },
+});
+const DEFAULT_SYNC_POLICY = 'relaxed';
+function syncPolicy() { return SYNC_POLICIES[S.syncMeta?.policy] || SYNC_POLICIES[DEFAULT_SYNC_POLICY]; }
 const OUTBOX_OP_PREFIX = 'spider.op.v1.', OUTBOX_INDEX_PREFIX = 'spider.outbox.v1.', SYNC_META_PREFIX = 'spider.sync.v1.';
 const AUTO_SYNC_NOTICE_KEY = 'spider.autosync.notice.v1';
 function emptySyncMeta() {
   return { version: 1, lastSyncAt: '', lastCheckAt: 0, backoffUntil: 0, backoffStep: 0,
-    errorKind: '', error: '', blocked: '', conflicts: {}, migrated: false, counter: 0 };
+    errorKind: '', error: '', blocked: '', conflicts: {}, migrated: false, counter: 0,
+    policy: '', lastBatchBytes: 0, lastBatchOps: 0, lastPicksAt: '' };
 }
 const S = {
   cfg: { owner: 'davidsheh', repo: 'spider', branch: '', provider: 'gitee' }, token: '', pin: null,
@@ -228,7 +237,7 @@ const S = {
   outbox: new Map(), conflicts: new Map(), remote: emptyReading(), syncMeta: emptySyncMeta(),
   syncState: { running: false, queued: false, timer: 0, maxTimer: 0, retryTimer: 0, storeTimer: 0,
     lastBatchAt: 0, firstDirtyAt: 0, activeOps: new Set(), writeBusy: false, gen: 0,
-    checked: false, notified: false, startedAt: 0, channel: null },
+    checked: false, notified: false, startedAt: 0, channel: null, maxBytes: 0 },
 };
 const INITIAL_ITEMS = 20, SCAN_DAYS = 7;
 
@@ -854,18 +863,23 @@ function textHash(text) {
 }
 const DECISIONS_RE = /^#[ \t]*decisions:[ \t]*(d1-[0-9a-f]{16})[ \t]*$/m;
 function decisionDigestOf(text) { const m = (text || '').match(DECISIONS_RE); return m ? m[1] : ''; }
-// 只覆盖显式桶决策（含时间戳，覆盖改走又改回的 ABA），收藏 / 已读不参与；排序后摘要不依赖字段顺序。
+function digestOf(ids, decisionOf) {
+  const rows = [...ids].sort().map(id => {
+    const row = decisionOf(id) || {};
+    return id + '\t' + (row.bucket || '') + '\t' + (row.bucket_updated_at || '');
+  });
+  return 'd1-' + textHash(rows.join('\n'));
+}
+// 验证：按 picks 实际行 id 用当前阅读状态算摘要；只覆盖显式 bucket + 时间戳，收藏 / 已读不参与。
+function picksDigest(text) {
+  return digestOf(new Set(parsePicks(text).keys()), id => readingItem(id));
+}
+// 测试 / 兼容入口：用给定 feed 与决策快照算摘要（picks 行 id 若给出也并入）。
 function decisionDigest(feed, decisions, remoteText = '') {
   const ids = new Set();
   for (const p of feed?.people || []) for (const it of p.items) ids.add(it.id);
   for (const id of parsePicks(remoteText).keys()) ids.add(id);
-  const rows = [...ids].sort().map(id => {
-    const row = decisions ? decisions.get(id) : readingItem(id);
-    const bucket = row && row.bucket ? row.bucket : '';
-    const stamp = row && row.bucket_updated_at ? row.bucket_updated_at : '';
-    return id + '\t' + bucket + '\t' + stamp;
-  });
-  return 'd1-' + textHash(rows.join('\n'));
+  return digestOf(ids, id => (decisions ? decisions.get(id) : readingItem(id)));
 }
 function freezeDecisions(feed) {
   // 冻结整个阅读状态的显式桶决策（而不只是当前 feed），使旧 picks 里多出的历史行也能稳定参与摘要。
@@ -910,8 +924,11 @@ function buildPicks(day, total, remote = '', context = null) {
     const summary = (it.summary || '').replace(/[\r\n]/g, ' ').slice(0, 60);
     out.push(`- [${keepItem(it) ? 'x' : ' '}] ${it.id} · ${p.name.replace(/[\r\n]/g, ' ')} · ${it.cat || '09_其他'} · t${it.topic ?? '-'}/s${it.signal ?? '-'} · ${summary}`);
   }
-  // 消除旧 confirmed / decisions 头，固定 UTC+8（与手机系统时区无关），并记录本次确认的桶决策快照摘要。
-  const digest = decisionDigest(feed, decisions, remote);
+  // 消除旧 confirmed / decisions 头，固定 UTC+8，并记录本次写入的桶决策快照摘要。
+  // 摘要只按 picks 实际行 id 计算（不按 feed 版本），避免桌面重渲染 feed 后误判旧确认过期。
+  const ids = new Set();
+  for (const line of out) { const m = line.trim().match(RE_ROW); if (m) ids.add(m[2]); }
+  const digest = digestOf(ids, id => decisionOf(id));
   const lines = out.filter(line => !/^#[ \t]*(?:confirmed|decisions):/.test(line));
   const at = lines[0]?.startsWith('# ') ? 1 : 0;
   lines.splice(at, 0, '# confirmed: ' + confirmedUTC8(), '# decisions: ' + digest);
@@ -923,26 +940,45 @@ function buildPicks(day, total, remote = '', context = null) {
 function syncStatus() {
   if (S.syncState.running) return 'syncing';
   if (S.storageError || S.outbox.size > 0 || S.conflicts.size > 0 || S.syncMeta.blocked ||
-      (!S.syncMeta.lastSyncAt && !S.syncState.checked)) return 'pending';
+      hasUnsyncedDrafts() || (!S.syncMeta.lastSyncAt && !S.syncState.checked)) return 'pending';
   return 'synced';
 }
 function syncLabel() { const s = syncStatus(); return s === 'syncing' ? '同步中' : s === 'synced' ? '已同步' : '可同步'; }
+function hasUnsyncedDrafts() {
+  return Object.values(S.store.days).some(day => day && Object.keys(day.pending || {}).length > 0);
+}
+function pendingStats(withBytes = false) {
+  const ops = [...S.outbox.values()], posts = new Set(ops.map(o => o.id));
+  let bytes = 0;
+  // 序列化整份状态较重，只在需要估算 / 展示时算；状态栏刷新不重复序列化。
+  if (withBytes) { try { bytes = new TextEncoder().encode(JSON.stringify(S.reading)).length; } catch (e) { bytes = 0; } }
+  // 估算实际请求体：Git contents 写入是 base64（约 4/3）+ JSON 包装开销。
+  const requestBytes = bytes ? Math.ceil(bytes / 3) * 4 + 512 : 0;
+  const draftDays = draftDates().length;
+  return { ops: ops.length, posts: posts.size, bytes, requestBytes, draftDays };
+}
+function adaptiveDebounce(policy, stats) {
+  // 数据量越大，越倾向合并成更大的批次，避免每读几条就重传整份状态文件。
+  const heavy = (stats.requestBytes || 0) >= SYNC.volumeWarnBytes || stats.ops >= SYNC.maxOps / 2;
+  return heavy ? Math.min(policy.debounce * 2, policy.maxWait) : policy.debounce;
+}
 function noteSyncChange() {
   if (!S.syncState.firstDirtyAt) S.syncState.firstDirtyAt = Date.now();
-  scheduleSync(SYNC.debounce);
-  const posts = new Set([...S.outbox.values()].map(o => o.id));
-  if (posts.size >= SYNC.batchThreshold) scheduleSync(Math.max(0, SYNC.minGap - (Date.now() - S.syncState.lastBatchAt)));
+  const policy = syncPolicy(), stats = pendingStats(true);
+  scheduleSync(adaptiveDebounce(policy, stats));
+  if (stats.posts >= policy.batchThreshold) scheduleSync(Math.max(0, policy.minGap - (Date.now() - S.syncState.lastBatchAt)));
   updateStatus();
 }
 function scheduleSync(delay) {
   if (S.syncState.running) { S.syncState.queued = true; return; }
+  const policy = syncPolicy();
   clearTimeout(S.syncState.timer);
-  const wait = Math.max(0, delay == null ? SYNC.debounce : delay);
+  const wait = Math.max(0, delay == null ? policy.debounce : delay);
   S.syncState.timer = setTimeout(() => { S.syncState.timer = 0; void requestSync('debounce'); }, wait);
   if (!S.syncState.firstDirtyAt) S.syncState.firstDirtyAt = Date.now();
-  // 连续操作从第一笔待同步改动起最多等待 15s，不被后续操作不断延期。
+  // 连续操作从第一笔待同步改动起最多等待 maxWait，不被后续操作不断延期。
   clearTimeout(S.syncState.maxTimer);
-  const remain = Math.max(0, S.syncState.firstDirtyAt + SYNC.maxWait - Date.now());
+  const remain = Math.max(0, S.syncState.firstDirtyAt + policy.maxWait - Date.now());
   S.syncState.maxTimer = setTimeout(() => { S.syncState.maxTimer = 0; void requestSync('deadline', { force: true }); }, remain);
 }
 function scheduleRetryAt(ms) {
@@ -962,7 +998,7 @@ async function requestSync(reason, opts = {}) {
   if (S.syncMeta.backoffUntil > now && !(opts.force && ['network', 'timeout', 'server', 'conflict'].includes(S.syncMeta.errorKind))) {
     scheduleRetryAt(S.syncMeta.backoffUntil - now); updateStatus(); return false;
   }
-  if (!opts.force && now - S.syncState.lastBatchAt < SYNC.minGap) { scheduleSync(SYNC.minGap - (now - S.syncState.lastBatchAt)); return false; }
+  if (!opts.force && now - S.syncState.lastBatchAt < syncPolicy().minGap) { scheduleSync(syncPolicy().minGap - (now - S.syncState.lastBatchAt)); return false; }
   if (document.visibilityState === 'hidden' && !opts.background) { updateStatus(); return false; }
   return runSyncBatch(opts);
 }
@@ -985,7 +1021,7 @@ async function runSyncBatch(opts = {}) {
   updateStatus();
   let ok = false;
   try {
-    ok = await withWriteLock(() => syncBatchInner(scope, gen, snapshot));
+    ok = await withWriteLock(() => syncAll(scope, gen, snapshot));
     if (ok && gen === S.syncState.gen && scope === scopeKey()) {
       S.syncState.lastBatchAt = Date.now(); S.syncState.firstDirtyAt = 0; S.syncState.checked = true;
       clearTimeout(S.syncState.maxTimer); S.syncState.maxTimer = 0;
@@ -999,7 +1035,7 @@ async function runSyncBatch(opts = {}) {
   } finally {
     S.syncState.running = false; S.syncState.activeOps = new Set(); S.syncState.startedAt = 0;
     updateStatus();
-    if (S.syncState.queued) { S.syncState.queued = false; scheduleSync(Math.max(0, SYNC.minGap - (Date.now() - S.syncState.lastBatchAt))); }
+    if (S.syncState.queued) { S.syncState.queued = false; scheduleSync(Math.max(0, syncPolicy().minGap - (Date.now() - S.syncState.lastBatchAt))); }
   }
   return ok;
 }
@@ -1089,6 +1125,12 @@ function finishBatch(snapshot, merged, conflicts) {
   }
   persistSyncMeta(); persistLocal(); updateStatus(); broadcastSync();
 }
+async function syncAll(scope, gen, snapshot) {
+  const ok = await syncBatchInner(scope, gen, snapshot);
+  if (!ok) return false;
+  await syncPicks(scope, gen); // 同一个写入锁内串行同步筛选结果，不另开并发。
+  return true;
+}
 async function syncBatchInner(scope, gen, snapshot) {
   const path = 'data/state/reading_state.json';
   const stale = () => { const e = new Error('请求已过期'); e.kind = 'stale'; return e; };
@@ -1115,6 +1157,15 @@ async function syncBatchInner(scope, gen, snapshot) {
     const local = readingForMerge(new Map([...S.conflicts, ...conflicts]));
     const merged = mergeReading(remote, local);
     const text = JSON.stringify(merged, null, 2) + '\n';
+    // 数据量检测：超过单批上限就 fail-closed，不盲写一份过大的状态文件。
+    const bytes = new TextEncoder().encode(text).length;
+    const requestBytes = Math.ceil(bytes / 3) * 4 + 512;
+    const maxBytes = S.syncState.maxBytes || SYNC.maxBytes;
+    if (requestBytes > maxBytes) {
+      const e = new Error(`待同步请求体约 ${(requestBytes / 1024).toFixed(0)}KB，超过上限 ${(maxBytes / 1024).toFixed(0)}KB；已停止写入，请清理历史阅读状态或评估分片`);
+      e.kind = 'toolarge'; throw e;
+    }
+    S.syncMeta.lastBatchBytes = requestBytes; S.syncMeta.lastBatchOps = active.length;
     // 补丁已存在于远端：直接确认，不重复 PUT 制造提交。
     if (entry && text === remoteText) { finishBatch(active, merged, conflicts); return true; }
     const res = await apiPut(path, text, 'chore(reading): 手机阅读状态字段合并', entry ? entry.sha : '');
@@ -1124,6 +1175,43 @@ async function syncBatchInner(scope, gen, snapshot) {
     return true;
   }
   throw lastError || Object.assign(new Error('共享仓库持续冲突，稍后重试'), { kind: 'conflict' });
+}
+// 筛选结果也是数据：读状态同步成功后，把有待同步决策的日期自动写成 picks（含 confirmed + 决策摘要），
+// 不再需要用户手动确认；失败日期保留草稿并计入待同步，由下一轮重试。
+async function syncPicks(scope, gen) {
+  const saved = [], failed = [];
+  let firstError = null;
+  for (const date of draftDates()) {
+    if (gen !== S.syncState.gen || scope !== scopeKey()) { const e = new Error('请求已过期'); e.kind = 'stale'; throw e; }
+    const day = S.store.days[date];
+    const pending = Object.assign({}, day?.pending || {});
+    if (!Object.keys(pending).length) continue;
+    if (!day || !day.feed) { failed.push(date); continue; } // 缺正文无法构建，保留草稿等下次
+    const decisions = freezeDecisions(day.feed);
+    let text = '';
+    try {
+      await putWithRetry(`daily/${date}/picks.md`, remote => {
+        text = buildPicks(date, day.feed.total || day.feed.people.reduce((n, p) => n + p.items.length, 0), remote, { feed: day.feed, pending, decisions });
+        return text;
+      }, `chore(picks): ${date} 自动同步筛选结果`);
+      day.picks = text;
+      for (const [id, value] of Object.entries(pending)) if (day.pending[id] === value) delete day.pending[id];
+      saved.push(date);
+    } catch (e) { failed.push(date); firstError = firstError || e; }
+  }
+  if (saved.length) {
+    S.syncMeta.lastPicksAt = new Date().toISOString();
+    const current = S.store.days[S.date];
+    if (current) { S.keep = parsePicks(current.picks); S.pending = Object.assign({}, current.pending || {}); }
+    S.dirty = Object.keys(S.pending).length > 0;
+    reconcilePending(); persistLocal();
+  }
+  if (firstError) {
+    firstError.picksFailed = failed;
+    firstError.message = `筛选结果同步失败 ${failed.length} 天（${failed.join('、')}）：${firstError.message}`;
+    throw firstError;
+  }
+  return { saved, failed };
 }
 // 无本地改动时的轻量核对：采纳远端，并把本地尚未上传的字段保守生成为恢复操作。
 function adoptRemoteWithRecovery(remote) {
@@ -1149,11 +1237,12 @@ function adoptRemoteWithRecovery(remote) {
 function handleSyncError(e) {
   const kind = e.kind || 'network', meta = S.syncMeta;
   meta.error = e.message || String(e); meta.errorKind = kind;
-  // 失败后由退避控制重试，不用旧的 15s 截止时间反复触发。
+  // 失败后由退避控制重试，不用旧的截止时间反复触发。
   S.syncState.firstDirtyAt = 0; clearTimeout(S.syncState.maxTimer); S.syncState.maxTimer = 0;
   if (kind === 'auth') { meta.blocked = 'auth'; meta.backoffUntil = 0; }
   else if (kind === 'corrupt') { meta.blocked = 'corrupt'; meta.backoffUntil = 0; }
   else if (kind === 'validation') { meta.blocked = 'validation'; meta.backoffUntil = 0; }
+  else if (kind === 'toolarge') { meta.blocked = 'toolarge'; meta.backoffUntil = 0; }
   else {
     meta.blocked = '';
     const now = Date.now();
@@ -1171,9 +1260,9 @@ function handleSyncError(e) {
   persistSyncMeta(); updateStatus();
 }
 async function checkRemote(opts = {}) {
-  if (S.outbox.size || S.conflicts.size || S.syncState.running) return false;
+  if (S.outbox.size || S.conflicts.size || hasUnsyncedDrafts() || S.syncState.running) return false;
   if (!S.token || S.syncMeta.blocked) return false;
-  if (!opts.force && Date.now() - (S.syncMeta.lastCheckAt || 0) < SYNC.checkThrottle) return false;
+  if (!opts.force && Date.now() - (S.syncMeta.lastCheckAt || 0) < syncPolicy().checkThrottle) return false;
   return runSyncBatch({ force: opts.force, check: true });
 }
 function resumeSync() {
@@ -1182,7 +1271,7 @@ function resumeSync() {
   }
   ensureSyncChannel();
   reconcileOutboxFromStorage();
-  if (S.outbox.size) scheduleSync(0); else void checkRemote({});
+  if (S.outbox.size || draftDates().length) scheduleSync(0); else void checkRemote({});
   updateStatus();
 }
 function outboxExport() {
@@ -1363,12 +1452,14 @@ function setState() {
 }
 function updateStatus() {
   const drafts = draftDates(), processing = S.busy || S.loading;
+  const policy = syncPolicy();
   const notes = [];
   // 错误不能被三态藏掉：主标签只有三个，但异常用辅助告警持续说明。
   if (S.storageError) notes.push('本机暂存失败，离开页面可能丢失；请立即同步或导出待同步记录。');
   if (S.syncMeta.blocked === 'auth') notes.push('自动同步已暂停：令牌失效或权限不足，请重新授权。');
   else if (S.syncMeta.blocked === 'corrupt') notes.push('远端阅读状态损坏或版本不受支持，已停止写入并保留本机数据。');
   else if (S.syncMeta.blocked === 'validation') notes.push('写入被远端拒绝（校验失败），已停止自动重试。');
+  else if (S.syncMeta.blocked === 'toolarge') notes.push('待同步数据量超过上限，已停止写入；请清理历史阅读状态或评估分片。');
   if (S.offline) notes.push('正在使用本机缓存；联网后会自动补齐同步。');
   if (S.conflicts.size) notes.push(`有 ${S.conflicts.size} 个字段两端同时修改，已保留双方；点顶部同步状态处理。`);
   if (!('IntersectionObserver' in window)) notes.push('浏览器使用滚动检测自动已读；读到帖尾停留 1.5 秒。');
@@ -1376,12 +1467,7 @@ function updateStatus() {
   if (notice) { notice.textContent = notes.join(' '); notice.hidden = !notes.length; }
   const items = timelineItems();
   const stat = $('#stat');
-  if (stat) stat.textContent = `已加载 ${S.loadedDates.length || (S.feed ? 1 : 0)} 天 · ${items.filter(visibleItem).length} 条 · 待确认 ${drafts.length} 天。投递清洗仅针对跳转所选日期 ${S.date || ''}。`;
-  const confirmBtn = $('#confirm');
-  if (confirmBtn) {
-    confirmBtn.disabled = processing || !drafts.length;
-    confirmBtn.textContent = drafts.length ? `确认筛选结果（${drafts.length} 天）` : '确认筛选结果';
-  }
+  if (stat) stat.textContent = `已加载 ${S.loadedDates.length || (S.feed ? 1 : 0)} 天 · ${items.filter(visibleItem).length} 条 · 待同步 ${S.outbox.size} 个字段 / ${drafts.length} 天筛选 · 同步策略 ${policy.label}。投递清洗仅针对跳转所选日期 ${S.date || ''}。`;
   const queue = $('#queue');
   if (queue) { queue.disabled = processing || !S.feed; queue.hidden = S.view === 'favorites'; }
   const dates = $('#dates'); if (dates) dates.hidden = S.view === 'favorites';
@@ -1391,10 +1477,15 @@ function updateStatus() {
 }
 function renderSyncSheet() {
   const body = $('#sync-detail'); if (!body) return;
-  const pending = [...S.outbox.values()], posts = new Set(pending.map(o => o.id));
+  const stats = pendingStats(true), policy = syncPolicy();
   const lines = [];
-  lines.push(`<div><b>${esc(syncLabel())}</b> · ${pending.length ? `待同步 ${posts.size} 个帖子 / ${pending.length} 个字段` : '没有待上传的阅读状态'}</div>`);
-  lines.push(`<div>${S.syncMeta.lastSyncAt ? '上次同步：' + esc(new Date(S.syncMeta.lastSyncAt).toLocaleString()) : '尚未完成远端核对'}</div>`);
+  lines.push(`<div><b>${esc(syncLabel())}</b> · 待同步 ${stats.ops} 个字段 / ${stats.posts} 个帖子 / ${stats.draftDays} 天筛选</div>`);
+  lines.push(`<div>预计请求体：${(stats.requestBytes / 1024).toFixed(1)}KB（原始 ${(stats.bytes / 1024).toFixed(1)}KB）${stats.requestBytes >= SYNC.volumeWarnBytes ? '（较大，已自动拉长防抖）' : ''}</div>`);
+  lines.push(`<div>上次同步：${S.syncMeta.lastSyncAt ? esc(new Date(S.syncMeta.lastSyncAt).toLocaleString()) : '尚未完成远端核对'}${S.syncMeta.lastBatchBytes ? ` · ${(S.syncMeta.lastBatchBytes / 1024).toFixed(1)}KB / ${S.syncMeta.lastBatchOps} 字段` : ''}</div>`);
+  if (S.syncMeta.lastPicksAt) lines.push(`<div>上次筛选结果同步：${esc(new Date(S.syncMeta.lastPicksAt).toLocaleString())}</div>`);
+  const unsynced = draftDates().map(date => `${date}${S.store.days[date]?.feed ? '' : '（缺少正文）'}`);
+  if (unsynced.length) lines.push(`<div>待同步筛选：${esc(unsynced.join('、'))}</div>`);
+  lines.push(`<div>同步策略：<select id="sync-policy">${Object.entries(SYNC_POLICIES).map(([key, p]) => `<option value="${key}"${key === (S.syncMeta.policy || DEFAULT_SYNC_POLICY) ? ' selected' : ''}>${esc(p.label)}（停手 ${p.debounce / 1000}s / 最长 ${p.maxWait / 1000}s）</option>`).join('')}</select></div>`);
   if (S.offline) lines.push('<div>当前离线；改动已保存在本机，联网后自动补齐。</div>');
   if (S.storageError) lines.push('<div>本机暂存失败：请导出待同步记录并立即同步。</div>');
   if (S.syncMeta.error) lines.push(`<div>${esc(S.syncMeta.blocked === 'auth' ? '需要重新授权：' : '原因：')}${esc(S.syncMeta.error)}</div>`);
@@ -1407,6 +1498,8 @@ function renderSyncSheet() {
       `<div><button data-conflict="${esc(key)}" data-choice="local">保留本机</button><button data-conflict="${esc(key)}" data-choice="remote">采用远端</button></div></div>`);
   }
   body.innerHTML = lines.join('');
+  const select = $('#sync-policy');
+  if (select) select.onchange = e => { S.syncMeta.policy = e.target.value; persistSyncMeta(); updateStatus(); if (S.outbox.size || draftDates().length) scheduleSync(0); };
   const now = $('#sync-now'); if (now) now.disabled = S.syncState.running;
 }
 function openSyncSheet() { closeMenu(); renderSyncSheet(); const el = $('#sync-sheet'); if (el) el.hidden = false; }
@@ -1694,6 +1787,8 @@ async function fetchDay(date, refresh = false) {
     S.feed = cached.feed; S.keep = parsePicks(cached.picks); S.pending = Object.assign({}, cached.pending);
   }
   reconcilePending(); persistLocal();
+  // 以前因缺正文而无法写的筛选草稿，在正文取到后立即补同步。
+  if (Object.keys(cached.pending || {}).length) scheduleSync(0);
   // API 失败不能推进日期游标，原地重试；有缓存仍可读，但必须报告未刷新成功。
   if (error) throw new Error(error);
   return cached;
@@ -1762,71 +1857,43 @@ async function saveReadingState() {
   const ok = await runSyncBatch({ force: true, throwOnError: true });
   if (!ok) throw new Error('阅读状态同步未完成');
 }
-async function save(datesArg, opts = {}) {
+// 兼容旧调用：立即同步一轮（阅读状态 + 筛选结果）。筛选结果已改为数据自动同步，不再需要手动确认。
+async function save() {
   if (S.busy || S.loading) return;
   persistLocal();
-  // 可只确认所选日期（投递入口），默认确认所有缓存日期的非空草稿。
-  const dates = Array.isArray(datesArg)
-    ? datesArg.filter(date => { const day = S.store.days[date]; return day && Object.keys(day.pending || {}).length; })
-    : draftDates();
-  if (!S.readingDirty && !dates.length) return toast('没有待保存改动；阅读与收藏已自动同步，未操作日期不会自动确认');
-  const message = dates.length ? `确认以下 ${dates.length} 天的筛选结果：\n${dates.join('、')}\n只确认这些日期，不投递清洗；未操作日期不会确认。` : '同步阅读 / 收藏状态；没有待确认决策，不会确认任何日期。';
-  if (!opts.skipConfirm && !confirm(message)) return;
+  if (!S.outbox.size && !draftDates().length) return toast('没有待同步改动；阅读、收藏和筛选结果都会自动同步');
   S.busy = true; updateStatus(); moreObserver?.disconnect();
-  const saved = [], failed = [];
-  let readingSaved = false;
   try {
-    await saveReadingState(); readingSaved = true; // 先合并远端墓碑，再逐日构建 picks。
-    for (const date of dates) {
-      const day = S.store.days[date];
-      const pending = Object.assign({}, day.pending);
-      const decisions = freezeDecisions(day.feed); // 冻结用户实际确认的决策快照，PUT 期间的新选择留到下一批。
-      try {
-        if (!day.feed) throw new Error('缺少该日正文，请先加载该日期再保存');
-        let text = '';
-        await putWithRetry(`daily/${date}/picks.md`, remote => {
-          text = buildPicks(date, day.feed.total || day.feed.people.reduce((n, p) => n + p.items.length, 0), remote, { feed: day.feed, pending, decisions });
-          return text;
-        }, `chore(picks): ${date} 手机端明确确认`);
-        day.picks = text;
-        for (const [id, value] of Object.entries(pending)) if (day.pending[id] === value) delete day.pending[id];
-        if (date === S.date) { S.keep = parsePicks(text); S.pending = Object.assign({}, day.pending); }
-        saved.push(date); persistLocal();
-      } catch (e) { failed.push(`${date}：${e.message}`); }
-    }
-    S.offline = failed.length > 0;
-    reconcilePending(); persistLocal();
-    toast(failed.length ? `阅读状态已同步；决策成功 ${saved.length} 天，失败 ${failed.length} 天：${failed.join('；')}。失败草稿已保留，可重试。` : `阅读状态已同步${saved.length ? `；${saved.length} 天决策已确认保存` : '；没有确认任何日期'}${S.readingDirty ? '；保存期间的新改动仍待自动同步' : ''}`, 6500);
+    await saveReadingState();
+    const left = S.outbox.size + draftDates().length;
+    if (left) toast('同步未完全完成，改动仍在本机，稍后自动重试', 6000);
+    else toast('已同步阅读状态与筛选结果', 2200);
   } catch (e) {
-    persistLocal(); toast(`${readingSaved ? '阅读状态已同步；' : '阅读状态同步失败，未确认任何决策；'}改动仍在本机：${e.message}`, 6500);
+    persistLocal();
+    if (e && e.picksFailed) toast(e.message + '；改动仍在本机，稍后自动重试', 6500);
+    else toast('阅读状态同步失败，改动仍在本机：' + e.message, 6500);
   } finally { S.busy = false; render(); }
 }
 
-async function deliverSelected() {
-  if (S.busy || S.loading || !S.feed) return;
-  const date = S.date, day = S.store.days[date];
-  if (day && Object.keys(day.pending || {}).length) {
-    if (!confirm(`确认 ${date} 的筛选结果并投递清洗？只处理这一天，其他日期的草稿保留。`)) return;
-    await save([date], { skipConfirm: true });
-    if (S.busy || S.dirty || Object.keys(S.store.days[date]?.pending || {}).length) return; // 确认失败则不投递
-  }
-  return deliver();
-}
 async function deliver() {
   if (S.busy || S.loading || !S.feed) return;
-  if (S.dirty) return toast('先在「更多 → 确认筛选结果」确认决策，再投递');
-  if (!confirm(`确认 ${S.date} 的筛选并投递已确认干货到清洗队列？仅处理这一天，不会投递其他已加载日期；桌面仍受影子模式保护，投递不等于完成归档。`)) return;
+  const date = S.date;
+  // 投递前先把待同步的筛选结果自动同步掉；失败则不投递。
+  if (S.outbox.size || draftDates().length) {
+    await save();
+    if (S.outbox.size || draftDates().length) return;
+  }
+  if (!confirm(`确认 ${date} 的筛选并投递已确认干货到清洗队列？仅处理这一天，不会投递其他已加载日期；桌面仍受影子模式保护，投递不等于完成归档。`)) return;
   S.busy = true; updateStatus();
   try {
-    await saveReadingState();
-    const text = fileText(await apiGet(`daily/${S.date}/picks.md`), `daily/${S.date}/picks.md`) || '';
-    S.store.days[S.date].picks = text; S.keep = parsePicks(text); reconcilePending(); persistLocal();
-    if (S.dirty || !isConfirmed(text)) throw new Error('最新 picks 尚未确认，请先确认并保存决策');
+    const text = fileText(await apiGet(`daily/${date}/picks.md`), `daily/${date}/picks.md`) || '';
+    S.store.days[date].picks = text; S.keep = parsePicks(text); reconcilePending(); persistLocal();
+    if (!isConfirmed(text)) throw new Error('最新 picks 尚未确认');
     // 确认新鲜度：旧 confirmed 不能授权之后发生的桶决策变化（收藏 / 已读不影响）。
-    const expected = decisionDigest(S.feed, null, text);
+    const expected = picksDigest(text);
     const stamped = decisionDigestOf(text);
-    if (!stamped) throw new Error('这条确认缺少决策摘要（旧格式），请重新确认所选日期');
-    if (stamped !== expected) throw new Error('桶决策在确认后已变化，请重新确认所选日期');
+    if (!stamped) throw new Error('这条确认缺少决策摘要（旧格式），请先触发一次自动同步');
+    if (stamped !== expected) throw new Error('桶决策在确认后已变化，请先触发一次自动同步');
     const selected = allItems().filter(it => bucketOf(it) === 'good' && S.keep.get(it.id) === true);
     let added = 0;
     await putWithRetry('data/state/clean_queue.json', remote => {
@@ -1835,11 +1902,11 @@ async function deliver() {
       const seen = new Set(list.map(x => x.id)); added = 0;
       for (const it of selected) {
         if (readingItem(it.id).bucket === 'destroyed' || seen.has(it.id)) continue;
-        list.push({ id: it.id, date: S.date, requested_at: new Date().toISOString(), status: 'pending' });
+        list.push({ id: it.id, date, requested_at: new Date().toISOString(), status: 'pending' });
         seen.add(it.id); added++;
       }
       return JSON.stringify(list, null, 2) + '\n';
-    }, `chore(clean): ${S.date} 手机投递清洗意图`);
+    }, `chore(clean): ${date} 手机投递清洗意图`);
     toast(added ? `已投递 ${added} 条，等待桌面处理` : '没有新的可投递条目'); S.offline = false;
   } catch (e) { toast(e.message || String(e), 5000); }
   finally { S.busy = false; render(); }
@@ -1922,7 +1989,7 @@ async function promptPin() {
 function maybeExplainAutoSync() {
   try { if (localStorage.getItem(AUTO_SYNC_NOTICE_KEY)) return; localStorage.setItem(AUTO_SYNC_NOTICE_KEY, '1'); }
   catch (e) { return; }
-  setTimeout(() => toast('阅读和收藏会自动同步；归档仍需明确确认。', 6000), 800);
+  setTimeout(() => toast('阅读、收藏和筛选结果都会自动同步；归档仍受桌面影子模式保护。', 6000), 800);
 }
 async function boot() {
   if (unsafeHttp()) return showHTTPSWarning();
@@ -1934,7 +2001,7 @@ async function boot() {
     if (!S.dates.length) { updateStatus(); $('#main').innerHTML = '<div class="empty">还没有 daily/ 或本机离线缓存</div>'; return; }
     await loadDay(S.dates[0]); // 默认从最新日期开始；历史草稿仍独立保留。
     maybeExplainAutoSync();
-    if (S.outbox.size) scheduleSync(0); else void checkRemote({});
+    if (S.outbox.size || draftDates().length) scheduleSync(0); else void checkRemote({});
   } catch (e) { showLogin('未能读取仓库：' + e.message + '。本机缓存没有删除。'); }
 }
 
@@ -1965,8 +2032,7 @@ $('#refresh').onclick = async () => {
 $('#update-shell').onclick = () => { closeMenu(); return refreshToNewVersion(); };
 $('#login-update-shell').onclick = refreshToNewVersion;
 const stateButton = $('#state'); if (stateButton) stateButton.onclick = () => openSyncSheet();
-const confirmButton = $('#confirm'); if (confirmButton) confirmButton.onclick = () => { closeMenu(); return save(); };
-$('#queue').onclick = () => { closeMenu(); return deliverSelected(); };
+$('#queue').onclick = () => { closeMenu(); return deliver(); };
 $('#fullscreen').onclick = () => { closeMenu(); return fullscreen(); }; // 必须由点击触发，绝不在开页时请求。
 // 同步详情：立即同步 / 导出 / 导入 / 冲突选择；点遮罩或关闭按钮收起。
 const syncSheet = $('#sync-sheet');
