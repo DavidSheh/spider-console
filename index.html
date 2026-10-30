@@ -9,6 +9,7 @@
 <title>雪坡</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon-180.png">
 <style>
 /* 手机阅读版式对齐雪球 App：全宽信息流行、作者头行、正文 18px/1.66、评论 15px、底部四键操作栏。 */
 :root{--bg:#0f1115;--card:#15171d;--card2:#1d2129;--chip:#1f232c;--line:#24272f;--line2:#2c313b;--fg:#e9ebef;--dim:#9aa3b2;--dim2:#78828f;--ok:#4ade80;--accent:#7dd3fc;--star:#fbbf24;--danger:#fca5a5;--fs-body:18px;--fs-cmt:15px;--fs-meta:12.5px;--pad:16px}
@@ -194,7 +195,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = '7616797e7e8602f0';
+const BUILD_VERSION = '06e4226c5abbf50b';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
