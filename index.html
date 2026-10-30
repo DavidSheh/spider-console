@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0f1115">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>干货阅读</title>
+<meta name="apple-mobile-web-app-title" content="雪坡">
+<title>雪坡</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -193,7 +194,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = '813cc2cb8cb8e0b6';
+const BUILD_VERSION = '7616797e7e8602f0';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -2066,7 +2067,7 @@ function showLogin(msg) {
   if (unsafeHttp()) return showHTTPSWarning();
   stopObserving(); $('#hdr').hidden = true; $('#notice').hidden = true; renderBuildStatus();
   $('#main').innerHTML = `<div class="login">
-    <h1>干货阅读</h1><div class="hint">用你的令牌读取私有仓，凭据只存在本机。</div>
+    <h1>雪坡</h1><div class="hint">用你的令牌读取私有仓，凭据只存在本机。</div>
     ${msg ? `<div class="hint">${esc(msg)}</div>` : ''}
     <label for="f-provider">数据源</label><select id="f-provider" style="width:100%">${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}"${S.cfg.provider === k ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}</select>
     <div class="hint" id="f-hint">${esc(provider().hint)}</div>

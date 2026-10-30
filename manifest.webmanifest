@@ -1,6 +1,6 @@
 {
-  "name": "干货控制台",
-  "short_name": "干货",
+  "name": "雪坡",
+  "short_name": "雪坡",
   "start_url": ".",
   "scope": "./",
   "display": "fullscreen",
@@ -10,6 +10,6 @@
   "theme_color": "#0f1115",
   "lang": "zh-CN",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }

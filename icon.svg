@@ -1,4 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#0f1115"/>
-  <path d="M17 33.5l10.5 10.5L47.5 24" fill="none" stroke="#4ade80" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" fill="#93c5fd"/>
+  <path d="M 0 64 L 0 54 C 1 53.2 17.9 38.9 20 38 C 22.1 37.1 39.8 37 42 36 C 44.2 35 62.9 18.9 64 18 L 64 64 Z" fill="#dde1e8"/>
+  <circle cx="39.105" cy="26.275" r="9.6" fill="#ffffff"/>
+  <defs>
+    <clipPath id="xuepoBall"><circle cx="39.105" cy="26.275" r="9.6"/></clipPath>
+  </defs>
+  <g clip-path="url(#xuepoBall)">
+    <circle cx="43.425" cy="30.595" r="9.024" fill="#c6cedb"/>
+  </g>
+  <circle cx="39.105" cy="26.275" r="9.6" fill="none" stroke="#ffbb00" stroke-width="0.8"/>
 </svg>

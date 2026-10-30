@@ -1,4 +1,4 @@
-# console —— 手机阅读器（无后端、无依赖）
+# console —— 雪坡 · 手机阅读器（无后端、无依赖）
 
 `index.html` 是 inline HTML / CSS / JavaScript 单页应用。浏览器用用户自己的令牌直接读写 Gitee / GitHub 私有仓；公开托管的页面与 Service Worker **只含空壳**，不附带正文、关注名单或凭据。
 
@@ -117,11 +117,12 @@ manifest 使用 `display: fullscreen`，`display_override: [fullscreen, standalo
 ## GitHub Pages 一键发布
 
 从 spider 仓库根目录执行；不用网页登录或 `gh` CLI。目标读取 `config.yaml` 的 `publish`
-（本机覆盖同其他配置），默认 `DavidSheh/spider-console / main / root`。
+（本机覆盖同其他配置），默认 `DavidSheh/xuepo / main / root`。手机访问地址由「用户站自定义域名 +
+本仓名」组成，即 `https://codebug.top/xuepo/`；改仓名就会改线上路径。
 
 ```yaml
 publish:
-  github_repo: "DavidSheh/spider-console"
+  github_repo: "DavidSheh/xuepo"
   branch: "main"
   token_env: "SPIDER_PAGES_TOKEN"
   token_file: "~/.spider_pages_token"
@@ -158,8 +159,8 @@ python -B console/publish.py            # 真正写远端、请求构建并等�
 
 ```bash
 # 先只读检查，再发布；URL 必须与 Pages 实际 HTTPS 地址完全一致
-python -B console/publish.py --check --api-only --https-url https://codebug.top/spider-console/
-python -B console/publish.py --api-only --https-url https://codebug.top/spider-console/
+python -B console/publish.py --check --api-only --https-url https://codebug.top/xuepo/
+python -B console/publish.py --api-only --https-url https://codebug.top/xuepo/
 ```
 
 该模式只确认目标提交的 Pages 构建完成，**不会声称桌面站点连接或线上 HTML/SW 验证成功**
