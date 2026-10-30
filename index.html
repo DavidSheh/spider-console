@@ -101,6 +101,9 @@ main{max-width:760px;margin:0 auto}
 .cmt .cmt-body{flex:1;min-width:0}
 .cmt .cmt-name{font-size:13px;color:var(--dim);margin-bottom:4px}
 .cmt .cmt-text{font-size:var(--fs-cmt);line-height:1.62;color:#dfe4ec;white-space:pre-wrap;overflow-wrap:anywhere}
+.cmt .cmt-more{flex:none;align-self:flex-start;display:grid;place-items:center;width:30px;height:30px;margin:-2px -6px 0 0;background:transparent;border:0;border-radius:8px;color:var(--dim2)}
+.cmt .cmt-more svg{width:18px;height:18px}
+.cmt .cmt-more:active{background:#1e222a;color:var(--fg)}
 .author-entry{display:block;width:100%;text-align:left;background:var(--card);border:0;border-bottom:1px solid var(--line);border-radius:0;padding:16px var(--pad);font-size:16px}
 .author-entry small{display:block;margin-top:4px;color:var(--dim);font-size:12px}
 .load-tail{text-align:center;padding:22px 8px;color:var(--dim);font-size:13px}
@@ -190,7 +193,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = 'a3a33f5e1ba9aa1a';
+const BUILD_VERSION = '813cc2cb8cb8e0b6';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -202,7 +205,7 @@ const PROVIDERS = {
 const LS = { cfg: 'spider.cfg', auth: 'spider.auth' };
 const $ = s => document.querySelector(s);
 const emptyReading = () => ({ version: 1, items: {} });
-const emptyStore = () => ({ dates: [], lastDate: '', days: {}, reading: emptyReading(), readingDirty: false });
+const emptyStore = () => ({ dates: [], lastDate: '', days: {}, reading: emptyReading(), readingDirty: false, hiddenComments: {} });
 // 自动同步策略：频率按「省流 / 标准 / 及时」三档，默认省流。手机实测原 3s/15s/10 帖过于频繁。
 // 数据量检测：待同步字段数、帖子数、整份状态字节数；超过上限 fail-closed，不盲写。
 const SYNC = Object.freeze({
@@ -232,7 +235,7 @@ const S = {
   store: emptyStore(), readingDirty: false, dirty: false, busy: false, offline: false,
   view: 'good', readFilter: 'all', heldRead: new Set(), storageError: false,
   loadedDates: [], loading: false, loadError: '', loadPaused: false, scanEmpty: 0,
-  favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null, openId: '', sheetId: '',
+  favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null, openId: '', sheetId: '', sheetComment: '',
   // 自动同步：outbox 是待上传的字段级操作，conflicts 是两端同字段分歧（保留双方，不静默丢弃）。
   outbox: new Map(), conflicts: new Map(), remote: emptyReading(), syncMeta: emptySyncMeta(),
   syncState: { running: false, queued: false, timer: 0, maxTimer: 0, retryTimer: 0, storeTimer: 0,
@@ -400,11 +403,12 @@ function restoreLocal() {
   try {
     const saved = JSON.parse(localStorage.getItem(scopeKey()) || 'null');
     if (saved) S.store = Object.assign(emptyStore(), saved);
+    if (!S.store.hiddenComments || typeof S.store.hiddenComments !== 'object' || Array.isArray(S.store.hiddenComments)) S.store.hiddenComments = {};
     S.reading = mergeReading(emptyReading(), S.store.reading);
   } catch (e) { S.reading = emptyReading(); toast('本机缓存无法读取，未使用损坏数据', 5000); }
   S.date = ''; S.feed = null; S.keep = new Map(); S.pending = {}; S.dirty = false;
   S.loadedDates = []; S.positions = {}; S.filters = {}; S.favoriteAuthor = ''; S.view = 'good'; S.readFilter = 'all';
-  S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.openId = ''; S.sheetId = '';
+  S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.openId = ''; S.sheetId = ''; S.sheetComment = '';
   // 切仓 / 重新启动：取消旧调度与旧请求代次，旧回调不得写入新 scope。
   S.syncState.gen++;
   clearTimeout(S.syncState.timer); clearTimeout(S.syncState.maxTimer); clearTimeout(S.syncState.retryTimer);
@@ -773,6 +777,33 @@ function sameReading(a, b) {
 }
 const readingItem = id => S.reading.items[id] || {};
 const isRead = id => !!readingItem(id).read_at;
+/* 评论没有稳定 id：用「作者 + 正文」哈希做键，评论排序变化也不会让已删除评论复活。
+   删除只写本机 scope 缓存，不进 reading_state 同步（同步协议按帖子字段合并，不承载评论级状态）。 */
+function hiddenCommentsMap() {
+  const map = S.store.hiddenComments;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) { S.store.hiddenComments = {}; return S.store.hiddenComments; }
+  return map;
+}
+const commentKey = c => textHash((c?.user || '') + '\n' + (c?.text || ''));
+function commentHidden(id, c) {
+  const row = hiddenCommentsMap()[id];
+  return !!(row && typeof row === 'object' && row[commentKey(c)]);
+}
+function visibleComments(it) { return (it?.comments || []).filter(c => !commentHidden(it.id, c)); }
+function hideComment(id, key) {
+  const map = hiddenCommentsMap(), row = map[id] && typeof map[id] === 'object' ? map[id] : (map[id] = {});
+  if (row[key]) return false;
+  row[key] = new Date().toISOString();
+  persistLocal();
+  return true;
+}
+function restoreComment(id, key) {
+  const map = hiddenCommentsMap(), row = map[id];
+  if (!row || typeof row !== 'object') return;
+  delete row[key];
+  if (!Object.keys(row).length) delete map[id];
+  persistLocal();
+}
 const fieldValue = (reading, id, field) => { const row = reading?.items?.[id]; return row && field in row ? row[field] : undefined; };
 const conflictKey = (id, field) => id + '|' + field;
 function remoteField(id, field) {
@@ -1351,6 +1382,7 @@ const ICONS = {
   undo: SVG('<polyline points="4 4 4 10 10 10"/><path d="M4.6 14a8 8 0 1 0 2-8.3L4 10"/>'),
   trash: SVG('<polyline points="4 7 20 7"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>'),
   compass: SVG('<circle cx="12" cy="12" r="9"/><polygon points="15.5 8.5 13.8 13.8 8.5 15.5 10.2 10.2"/>'),
+  copy: SVG('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
 };
 const icon = name => ICONS[name] || '';
 function avatarTag(name, key) {
@@ -1372,16 +1404,36 @@ function openSheet(id) {
   if (!it) return;
   // 弹窗占据屏幕底部，先收起可能正在显示的提示，否则会盖住「取消」。
   closeMenu(); $('#toast').classList.remove('show');
-  S.sheetId = id; renderSheet();
+  S.sheetId = id; S.sheetComment = ''; renderSheet();
 }
-function closeSheet() { if (S.sheetId) { S.sheetId = ''; renderSheet(); } else { const wrap = $('#sheet'); if (wrap) wrap.hidden = true; } }
+function openCommentSheet(id, key) {
+  const it = timelineItems().find(it => it.id === id && bucketOf(it) !== 'destroyed');
+  if (!it || !visibleComments(it).some(c => commentKey(c) === key)) return;
+  closeMenu(); $('#toast').classList.remove('show');
+  S.sheetId = id; S.sheetComment = key; renderSheet();
+}
+function closeSheet() {
+  if (S.sheetId || S.sheetComment) { S.sheetId = ''; S.sheetComment = ''; renderSheet(); }
+  else { const wrap = $('#sheet'); if (wrap) wrap.hidden = true; }
+}
 function renderSheet() {
   const wrap = $('#sheet'); if (!wrap) return;
   const it = S.sheetId ? timelineItems().find(it => it.id === S.sheetId && bucketOf(it) !== 'destroyed') : null;
-  if (!it) { S.sheetId = ''; wrap.hidden = true; const items = $('#sheet-items'); if (items) items.innerHTML = ''; return; }
+  if (!it) { S.sheetId = ''; S.sheetComment = ''; wrap.hidden = true; const items = $('#sheet-items'); if (items) items.innerHTML = ''; return; }
+  if (S.sheetComment) {
+    const comment = visibleComments(it).find(c => commentKey(c) === S.sheetComment);
+    if (!comment) { S.sheetId = ''; S.sheetComment = ''; wrap.hidden = true; const items = $('#sheet-items'); if (items) items.innerHTML = ''; return; }
+    $('#sheet-items').innerHTML = [
+      `<button class="sheet-item danger" data-sheet-action="comment-delete"><span class="ico">${icon('trash')}</span><span>删除</span></button>`,
+      `<button class="sheet-item" data-sheet-action="comment-copy"><span class="ico">${icon('copy')}</span><span>复制</span></button>`,
+    ].join('');
+    wrap.hidden = false;
+    return;
+  }
   const water = bucketOf(it) === 'water';
   const url = /^https?:\/\//i.test(it.url || '') ? it.url : '';
   $('#sheet-items').innerHTML = [
+    `<button class="sheet-item" data-sheet-action="copy"><span class="ico">${icon('copy')}</span><span>复制</span></button>`,
     `<button class="sheet-item" data-sheet-action="bucket"><span class="ico">${icon(water ? 'undo' : 'down')}</span><span>${water ? '捞回干货' : '水贴'}</span></button>`,
     `<button class="sheet-item danger" data-sheet-action="destroy"><span class="ico">${icon('trash')}</span><span>销毁</span></button>`,
     `<button class="sheet-item" data-sheet-action="open"${url ? '' : ' disabled'}><span class="ico">${icon('compass')}</span><span>浏览器打开</span></button>`,
@@ -1389,19 +1441,37 @@ function renderSheet() {
   wrap.hidden = false;
 }
 /* 分享原文链接：优先系统分享面板，其次剪贴板，最后把链接显示出来。
+   不同浏览器 / WebView 接受的字段不同，从完整到最简逐个尝试；用户取消不算失败。
    不用 prompt：手机上是阻塞式原生弹窗，也不方便长按选取。 */
 async function sharePost(it) {
   const url = /^https?:\/\//i.test(it.url || '') ? it.url : '';
   if (!url) return toast('这条帖子没有可分享的原文链接');
-  const data = { title: `${it.author_name || '帖子'}的帖子`, text: (it.text || '').replace(/\s+/g, ' ').trim().slice(0, 80), url };
-  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-    try { await navigator.share(data); return; }
-    catch (e) { if (e && e.name === 'AbortError') return; }
+  const nav = typeof navigator !== 'undefined' ? navigator : null;
+  if (nav && typeof nav.share === 'function') {
+    const title = `${it.author_name || '帖子'}的帖子`;
+    const text = (it.text || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    // 部分 WebView 只认 url：字段从多到少依次降级，避免一次 TypeError 就跳过系统面板。
+    // 正文为空时不塞空字符串，避免个别实现把空 text 当成无效 ShareData。
+    const payloads = text ? [{ title, text, url }, { text, url }, { url }] : [{ title, url }, { url }];
+    for (const data of payloads) {
+      if (typeof nav.canShare === 'function') {
+        let can = false;
+        try { can = nav.canShare(data); } catch (e) { can = false; }
+        if (!can) continue;
+      }
+      try { await nav.share(data); return; }
+      catch (e) {
+        const name = e && e.name;
+        if (name === 'AbortError') return;      // 用户取消：不改状态，也不降级
+        if (name === 'NotAllowedError') break;  // 权限 / 激活问题，换字段也没用
+        // TypeError / DataError 等：继续尝试更简的 payload
+      }
+    }
   }
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try { await navigator.clipboard.writeText(url); return toast('原文链接已复制'); } catch (e) { /* 未聚焦 / 无权限时继续降级。 */ }
+  if (nav && nav.clipboard?.writeText) {
+    try { await nav.clipboard.writeText(url); return toast('系统分享不可用，已复制原文链接'); } catch (e) { /* 未聚焦 / 无权限时继续降级。 */ }
   }
-  if (copyText(url)) return toast('原文链接已复制');
+  if (copyText(url)) return toast('系统分享不可用，已复制原文链接');
   toast('原文链接：' + url, 8000);
 }
 /* 剪贴板降级：`navigator.clipboard` 在未聚焦的页面 / 旧 WebView 会拒绝，execCommand 在用户手势里仍可用。 */
@@ -1417,6 +1487,55 @@ function copyText(text) {
     area.remove();
     return ok;
   } catch (e) { return false; }
+}
+/* 复制走与分享相同的降级链：Clipboard API → execCommand。失败时明确提示，不假装成功。 */
+async function copyToClipboard(text, message) {
+  const value = String(text == null ? '' : text);
+  if (!value) return false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(value); toast(message); return true; }
+    catch (e) { /* 未聚焦 / 无权限时继续降级。 */ }
+  }
+  if (copyText(value)) { toast(message); return true; }
+  toast('复制失败：当前浏览器不允许写入剪贴板', 5000);
+  return false;
+}
+/* 复制帖子内容：正文 + 引用 + 转发链，不加作者 / 时间 / 链接等元信息。 */
+function postCopyText(it) {
+  const parts = [];
+  const body = String(it?.text || '').trim(); if (body) parts.push(body);
+  for (const q of it?.quotes || []) if (q?.text) parts.push((q.nick ? '@' + q.nick + '：' : '') + String(q.text).trim());
+  const chain = String(it?.chain || '').trim(); if (chain) parts.push(chain);
+  return parts.join('\n\n');
+}
+function copyPost(it) {
+  const text = postCopyText(it);
+  if (text) return copyToClipboard(text, '帖子内容已复制');
+  const url = /^https?:\/\//i.test(it?.url || '') ? it.url : '';
+  if (url) return copyToClipboard(url, '这条帖子没有正文，已复制原文链接');
+  toast('这条帖子没有可复制的正文');
+  return false;
+}
+function copyComment(comment) {
+  const text = String(comment?.text || '').trim();
+  if (!text) { toast('这条评论没有可复制的文字'); return false; }
+  return copyToClipboard(text, '评论已复制');
+}
+function deleteComment(id, key) {
+  const it = timelineItems().find(it => it.id === id);
+  if (!it) return;
+  const comment = visibleComments(it).find(c => commentKey(c) === key);
+  if (!comment) return toast('这条评论已不在本机内容中');
+  if (!hideComment(id, key)) return;
+  render();
+  toast('评论已删除，本机不再显示', 5000);
+  const button = document.createElement?.('button');
+  if (button) {
+    button.textContent = '撤销';
+    button.onclick = () => { restoreComment(id, key); render(); toast('已恢复这条评论'); };
+    const toastEl = $('#toast');
+    if (toastEl?.appendChild) toastEl.appendChild(button);
+  }
 }
 function openExternal(url) {
   if (!/^https?:\/\//i.test(url || '')) return toast('这条帖子没有可打开的原文链接');
@@ -1587,9 +1706,9 @@ function render() {
     // 帖子详情：正文 + 评论单独成页，时间线只留评论入口，避免评论把每张卡片撑长。
     parts.push(`<div class="detail-bar"><button class="back" data-back-detail aria-label="返回列表">${icon('back')}</button>${avatarTag(openItem.author_name, openItem.author_key || openItem.author_name)}<span class="name">${esc(openItem.author_name || '')}</span><span class="grow"></span><button class="sync-mini ${syncStatus()}" id="detail-state" data-sync-open aria-label="同步状态">${syncLabel()}</button><button class="act" data-action="more" data-id="${esc(openItem.id)}" aria-label="更多操作">${icon('more')}</button></div>`);
     parts.push(card(openItem, true));
-    const comments = openItem.comments || [];
+    const comments = visibleComments(openItem);
     parts.push(comments.length
-      ? `<section class="cmts"><div class="cmts-head">评论 · ${comments.length}</div>${comments.map(c => `<div class="cmt">${avatarTag(c.user, c.user)}<div class="cmt-body"><div class="cmt-name">${esc(c.user)}${c.author ? '（作者）' : ''}</div><div class="cmt-text">${esc(c.text)}</div></div></div>`).join('')}</section>`
+      ? `<section class="cmts"><div class="cmts-head">评论 · ${comments.length}</div>${comments.map(c => `<div class="cmt">${avatarTag(c.user, c.user)}<div class="cmt-body"><div class="cmt-name">${esc(c.user)}${c.author ? '（作者）' : ''}</div><div class="cmt-text">${esc(c.text)}</div></div><button class="cmt-more" data-comment-more="${esc(openItem.id)}" data-comment-key="${esc(commentKey(c))}" aria-label="评论操作">${icon('more')}</button></div>`).join('')}</section>`
       : '<div class="empty">这条帖子没有评论</div>');
   } else if (S.view === 'favorites' && !S.favoriteAuthor) {
     const groups = new Map();
@@ -1640,7 +1759,7 @@ function card(it, detail = false) {
   const water = bucketOf(it) === 'water', favorite = !!readingItem(it.id).favorite, read = isRead(it.id);
   const quotes = (it.quotes || []).map(x => `<div class="quote">${x.nick ? '@' + esc(x.nick) + '：' : ''}${esc(x.text)}</div>`).join('');
   const chain = it.chain ? `<blockquote>${esc(it.chain)}</blockquote>` : '';
-  const comments = it.comments || [];
+  const comments = visibleComments(it);
   const paras = (it.text || '').split(/\n{2,}/).filter(t => t.trim()).map(t => `<p>${esc(t)}</p>`).join('');
   // 作者头行对齐雪球：头像 + 名称 + 平台 / 时间 + 已读；详情页作者已在返回条，头行只留元信息。
   const meta = `<span class="meta">${platTag(it)}${esc(whenLabel(it))}</span><span class="read-label">${read ? '已读' : '未读'}</span>`;
@@ -1795,7 +1914,7 @@ async function fetchDay(date, refresh = false) {
 }
 async function loadDay(date) {
   if (S.busy || S.loading || !date) return;
-  persistLocal(); stopObserving(); S.heldRead.clear(); S.openId = ''; S.sheetId = '';
+  persistLocal(); stopObserving(); S.heldRead.clear(); S.openId = ''; S.sheetId = ''; S.sheetComment = '';
   S.date = date; S.busy = true; S.offline = false; S.loadedDates = [date];
   S.loadError = ''; S.failedDate = ''; S.loadPaused = false; S.scanEmpty = 0;
   const cached = S.store.days[date] || { feed: null, picks: '', pending: {} };
@@ -1839,7 +1958,7 @@ async function loadMore(initial = false) {
 }
 async function switchView(view) {
   if (S.busy || S.loading) return toast('正在加载或保存，请稍候，或暂停加载');
-  rememberPosition(); persistLocal(); S.filters[S.view] = S.readFilter; S.view = view; S.openId = ''; S.sheetId = '';
+  rememberPosition(); persistLocal(); S.filters[S.view] = S.readFilter; S.view = view; S.openId = ''; S.sheetId = ''; S.sheetComment = '';
   S.readFilter = S.filters[view] || 'all'; $('#read-filter').value = S.readFilter; S.heldRead.clear();
   const position = S.positions[positionKey()];
   if (view !== 'favorites' && position?.date) {
@@ -2062,6 +2181,8 @@ $('#main').addEventListener('click', e => {
   if (control.dataset.loadMore !== undefined) { S.loadPaused = false; S.scanEmpty = 0; void loadMore(true); return; }
   // 详情页打开 / 返回、分享与「更多」弹窗只是导航或只读动作，加载中也允许，避免自动加载时点不动。
   if (control.dataset.syncOpen !== undefined) { openSyncSheet(); return; }
+  // 评论菜单只是导航 / 复制 / 本机隐藏，加载中也允许操作。
+  if (control.dataset.commentMore !== undefined) { openCommentSheet(control.dataset.commentMore, control.dataset.commentKey || ''); return; }
   if (control.dataset.open !== undefined) { openDetail(control.dataset.open); return; }
   if (control.dataset.backDetail !== undefined) { closeDetail(); return; }
   const b = e.target.closest('button[data-action]');
@@ -2086,8 +2207,16 @@ $('#sheet').addEventListener('click', e => {
   if (!b) return;
   if (b.dataset.sheetClose !== undefined) { closeSheet(); return; }
   const action = b.dataset.sheetAction; if (!action) return;
-  const id = S.sheetId; closeSheet();
+  const id = S.sheetId, key = S.sheetComment; closeSheet();
   if (action === 'open') { const it = timelineItems().find(it => it.id === id); if (it) openExternal(it.url); return; }
+  if (action === 'copy') { const it = timelineItems().find(it => it.id === id); if (it) copyPost(it); return; }
+  if (action === 'comment-copy') {
+    const it = timelineItems().find(it => it.id === id);
+    const comment = it && visibleComments(it).find(c => commentKey(c) === key);
+    if (comment) copyComment(comment);
+    return;
+  }
+  if (action === 'comment-delete') { deleteComment(id, key); return; }
   applyAction(action, id);
 });
 function applyAction(action, id) {
