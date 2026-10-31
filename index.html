@@ -195,7 +195,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = '06e4226c5abbf50b';
+const BUILD_VERSION = 'dfb2df4fc97a9185';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -217,13 +217,28 @@ const SYNC = Object.freeze({
   maxOps: 400,             // 单批待同步字段上限
   volumeWarnBytes: 800000, // 超过约 800KB 时自动拉长防抖，倾向合并成更大批次
 });
+// 每档分两组参数：决策（桶 / 收藏，影响归档）与已读（只需跨设备最终一致）。
+// 已读标记是阅读时持续产生的字段；与决策共用一组参数会退化成「每 minGap 一个提交」（ADR-0027）。
 const SYNC_POLICIES = Object.freeze({
-  relaxed: { label: '省流', debounce: 15000, maxWait: 120000, batchThreshold: 40, minGap: 60000, checkThrottle: 300000 },
-  standard: { label: '标准', debounce: 8000, maxWait: 60000, batchThreshold: 20, minGap: 30000, checkThrottle: 120000 },
-  fast: { label: '及时', debounce: 3000, maxWait: 15000, batchThreshold: 10, minGap: 5000, checkThrottle: 30000 },
+  relaxed: { label: '省流', debounce: 45000, maxWait: 600000, batchThreshold: 80, minGap: 180000, checkThrottle: 300000,
+             read: { debounce: 180000, maxWait: 1800000, minGap: 900000 } },
+  standard: { label: '标准', debounce: 15000, maxWait: 180000, batchThreshold: 30, minGap: 60000, checkThrottle: 120000,
+              read: { debounce: 60000, maxWait: 900000, minGap: 300000 } },
+  fast: { label: '及时', debounce: 3000, maxWait: 15000, batchThreshold: 10, minGap: 5000, checkThrottle: 30000,
+          read: { debounce: 20000, maxWait: 180000, minGap: 60000 } },
 });
 const DEFAULT_SYNC_POLICY = 'relaxed';
 function syncPolicy() { return SYNC_POLICIES[S.syncMeta?.policy] || SYNC_POLICIES[DEFAULT_SYNC_POLICY]; }
+// 只有已读字段排队（且没有待同步筛选草稿）时用已读档；一旦有桶 / 收藏 / 草稿就回到决策档。
+function readOnlyPending() {
+  if (!S.outbox.size) return false;
+  for (const op of S.outbox.values()) if (op.field !== 'read_at') return false;
+  return !hasUnsyncedDrafts();
+}
+function activePolicy(readOnly = readOnlyPending()) {
+  const policy = syncPolicy();
+  return readOnly && policy.read ? Object.assign({}, policy, policy.read) : policy;
+}
 const OUTBOX_OP_PREFIX = 'spider.op.v1.', OUTBOX_INDEX_PREFIX = 'spider.outbox.v1.', SYNC_META_PREFIX = 'spider.sync.v1.';
 const AUTO_SYNC_NOTICE_KEY = 'spider.autosync.notice.v1';
 function emptySyncMeta() {
@@ -778,7 +793,18 @@ function sameReading(a, b) {
   return JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
 }
 const readingItem = id => S.reading.items[id] || {};
-const isRead = id => !!readingItem(id).read_at;
+/* ---------------------------------------------------------- 跨平台同文组（ADR-0027）
+   feed 里一条卡片可能代表多个平台的同一篇帖子（`ids` 主帖在前、`variants` 带各自原链接）。
+   阅读 / 收藏 / 销毁 / 干货水贴 这些人工状态必须**整组一致**：手机上只看见一条，
+   两个平台各留一半状态的话，切回桌面或归档就对不上了。 */
+function groupIds(it) {
+  const ids = it && Array.isArray(it.ids) ? it.ids.filter(validId) : [];
+  return ids.length ? ids : (it && validId(it.id) ? [it.id] : []);
+}
+function groupOfId(id) { return allItems().find(it => it.id === id || groupIds(it).includes(id)) || { id, ids: [id] }; }
+const groupIdsById = id => groupIds(groupOfId(id));
+const isRead = id => groupIdsById(id).some(pid => !!readingItem(pid).read_at);
+const isFavorite = it => groupIds(it).some(pid => !!readingItem(pid).favorite);
 /* 评论没有稳定 id：用「作者 + 正文」哈希做键，评论排序变化也不会让已删除评论复活。
    删除只写本机 scope 缓存，不进 reading_state 同步（同步协议按帖子字段合并，不承载评论级状态）。 */
 function hiddenCommentsMap() {
@@ -786,10 +812,15 @@ function hiddenCommentsMap() {
   if (!map || typeof map !== 'object' || Array.isArray(map)) { S.store.hiddenComments = {}; return S.store.hiddenComments; }
   return map;
 }
-const commentKey = c => textHash((c?.user || '') + '\n' + (c?.text || ''));
+/* 跨平台同文合并后，同一条卡片下会同时有两边的评论；作者两边发同一句话是真存在的，
+   所以 key 必须带平台，否则删一条会连带删掉另一条（ADR-0027）。旧 key 仍然认：
+   手机上已经隐藏过的评论不能因为改算法而复活。 */
+const legacyCommentKey = c => textHash((c?.user || '') + '\n' + (c?.text || ''));
+const commentKey = c => textHash((c?.platform || '') + '\n' + (c?.user || '') + '\n' + (c?.text || ''));
 function commentHidden(id, c) {
   const row = hiddenCommentsMap()[id];
-  return !!(row && typeof row === 'object' && row[commentKey(c)]);
+  if (!row || typeof row !== 'object') return false;
+  return !!(row[commentKey(c)] || row[legacyCommentKey(c)]);
 }
 function visibleComments(it) { return (it?.comments || []).filter(c => !commentHidden(it.id, c)); }
 function hideComment(id, key) {
@@ -799,10 +830,12 @@ function hideComment(id, key) {
   persistLocal();
   return true;
 }
-function restoreComment(id, key) {
+function restoreComment(id, key, comment) {
   const map = hiddenCommentsMap(), row = map[id];
   if (!row || typeof row !== 'object') return;
   delete row[key];
+  // 旧算法写入的 key（不带平台）也要清，否则同一条评论的另一平台副本仍然隐藏。
+  if (comment) delete row[legacyCommentKey(comment)];
   if (!Object.keys(row).length) delete map[id];
   persistLocal();
 }
@@ -821,6 +854,16 @@ function baselineFor(id, field, previous) {
 }
 function changeReading(id, field, value) {
   if (!validId(id) || (field === 'bucket' && readingItem(id).bucket === 'destroyed')) return false;
+  // 跨平台同文：状态扇出到组内每个 id，让桌面端 / 归档 / 另一端手机都看到一致结果。
+  const ids = groupIdsById(id);
+  if (ids.length > 1) {
+    let changed = false;
+    for (const pid of ids) changed = applyReading(pid, field, value) || changed;
+    return changed;
+  }
+  return applyReading(id, field, value);
+}
+function applyReading(id, field, value) {
   const item = Object.assign({}, readingItem(id));
   if (item[field] === value) return false;
   const time = FIELDS[field];
@@ -854,8 +897,10 @@ function parsePicks(text) {
 }
 function allItems() { return S.feed ? S.feed.people.flatMap(p => p.items) : []; }
 function bucketOf(it) {
-  const state = readingItem(it.id);
-  if (state.bucket) return state.bucket;
+  // 先看销毁：历史数据可能只有被折叠那个平台被销毁，整组仍要隐藏。
+  const ids = groupIds(it);
+  for (const id of ids) if (readingItem(id).bucket === 'destroyed') return 'destroyed';
+  for (const id of ids) { const bucket = readingItem(id).bucket; if (bucket) return bucket; }
   const day = it._date && it._date !== S.date ? S.store.days[it._date] : null;
   const pending = day ? day.pending || {} : S.pending;
   const keep = day ? parsePicks(day.picks) : S.keep;
@@ -997,14 +1042,15 @@ function adaptiveDebounce(policy, stats) {
 }
 function noteSyncChange() {
   if (!S.syncState.firstDirtyAt) S.syncState.firstDirtyAt = Date.now();
-  const policy = syncPolicy(), stats = pendingStats(true);
+  const readOnly = readOnlyPending(), policy = activePolicy(readOnly), stats = pendingStats(true);
   scheduleSync(adaptiveDebounce(policy, stats));
-  if (stats.posts >= policy.batchThreshold) scheduleSync(Math.max(0, policy.minGap - (Date.now() - S.syncState.lastBatchAt)));
+  // 「攒够帖数就提前推」只服务决策类改动：已读只有低频兜底，不该因为读得多就写得勤。
+  if (!readOnly && stats.posts >= policy.batchThreshold) scheduleSync(Math.max(0, policy.minGap - (Date.now() - S.syncState.lastBatchAt)));
   updateStatus();
 }
 function scheduleSync(delay) {
   if (S.syncState.running) { S.syncState.queued = true; return; }
-  const policy = syncPolicy();
+  const policy = activePolicy();
   clearTimeout(S.syncState.timer);
   const wait = Math.max(0, delay == null ? policy.debounce : delay);
   S.syncState.timer = setTimeout(() => { S.syncState.timer = 0; void requestSync('debounce'); }, wait);
@@ -1031,7 +1077,8 @@ async function requestSync(reason, opts = {}) {
   if (S.syncMeta.backoffUntil > now && !(opts.force && ['network', 'timeout', 'server', 'conflict'].includes(S.syncMeta.errorKind))) {
     scheduleRetryAt(S.syncMeta.backoffUntil - now); updateStatus(); return false;
   }
-  if (!opts.force && now - S.syncState.lastBatchAt < syncPolicy().minGap) { scheduleSync(syncPolicy().minGap - (now - S.syncState.lastBatchAt)); return false; }
+  const gapPolicy = activePolicy();
+  if (!opts.force && now - S.syncState.lastBatchAt < gapPolicy.minGap) { scheduleSync(gapPolicy.minGap - (now - S.syncState.lastBatchAt)); return false; }
   if (document.visibilityState === 'hidden' && !opts.background) { updateStatus(); return false; }
   return runSyncBatch(opts);
 }
@@ -1068,7 +1115,7 @@ async function runSyncBatch(opts = {}) {
   } finally {
     S.syncState.running = false; S.syncState.activeOps = new Set(); S.syncState.startedAt = 0;
     updateStatus();
-    if (S.syncState.queued) { S.syncState.queued = false; scheduleSync(Math.max(0, syncPolicy().minGap - (Date.now() - S.syncState.lastBatchAt))); }
+    if (S.syncState.queued) { S.syncState.queued = false; scheduleSync(Math.max(0, activePolicy().minGap - (Date.now() - S.syncState.lastBatchAt))); }
   }
   return ok;
 }
@@ -1397,7 +1444,12 @@ function whenLabel(it) {
   const date = it._date || S.date || '', time = it.time || '';
   return ((date.length >= 10 ? date.slice(5) : date) + ' ' + time).trim();
 }
-function platTag(it) { return it.platform ? `<span class="plat">${esc(it.platform)}</span>` : ''; }
+function platTag(it) {
+  // 跨平台同文合并成一条卡片时，元信息里把两个平台都写出来（ADR-0027）
+  const names = Array.isArray(it.platforms) && it.platforms.length ? it.platforms : (it.platform ? [it.platform] : []);
+  return names.length ? `<span class="plat">${esc(names.join('+'))}</span>` : '';
+}
+const multiPlatform = it => Array.isArray(it.platforms) && it.platforms.length > 1;
 
 /* ---------------------------------------------------------------- 帖子详情：评论单独成页，返回恢复列表位置 */
 function closeMenu() { const more = $('#more'); if (more) more.open = false; }
@@ -1425,9 +1477,11 @@ function renderSheet() {
   if (S.sheetComment) {
     const comment = visibleComments(it).find(c => commentKey(c) === S.sheetComment);
     if (!comment) { S.sheetId = ''; S.sheetComment = ''; wrap.hidden = true; const items = $('#sheet-items'); if (items) items.innerHTML = ''; return; }
+    const url = commentPlatformUrl(it, comment);
     $('#sheet-items').innerHTML = [
       `<button class="sheet-item danger" data-sheet-action="comment-delete"><span class="ico">${icon('trash')}</span><span>删除</span></button>`,
       `<button class="sheet-item" data-sheet-action="comment-copy"><span class="ico">${icon('copy')}</span><span>复制</span></button>`,
+      `<button class="sheet-item" data-sheet-action="comment-open"${url ? '' : ' disabled'}><span class="ico">${icon('compass')}</span><span>浏览器打开</span></button>`,
     ].join('');
     wrap.hidden = false;
     return;
@@ -1534,7 +1588,7 @@ function deleteComment(id, key) {
   const button = document.createElement?.('button');
   if (button) {
     button.textContent = '撤销';
-    button.onclick = () => { restoreComment(id, key); render(); toast('已恢复这条评论'); };
+    button.onclick = () => { restoreComment(id, key, comment); render(); toast('已恢复这条评论'); };
     const toastEl = $('#toast');
     if (toastEl?.appendChild) toastEl.appendChild(button);
   }
@@ -1543,6 +1597,22 @@ function openExternal(url) {
   if (!/^https?:\/\//i.test(url || '')) return toast('这条帖子没有可打开的原文链接');
   if (typeof window !== 'undefined' && typeof window.open === 'function') { window.open(url, '_blank', 'noopener,noreferrer'); return; }
   location.assign(url);
+}
+/* 评论属于哪个平台，就打开哪个平台的原文。两个平台都没有单条评论的公开 permalink
+   （检索核实：微博只有整帖页 `weibo.com/<uid>/<mid>`、雪球连评论锚点都没有），
+   所以「跳到那条评论」做不到；退而求其次：打开原文 + 把评论文字复制到剪贴板，站内搜一下就能定位。 */
+function commentPlatformUrl(it, comment) {
+  const variant = (it.variants || []).find(v => v && v.platform && v.platform === comment.platform);
+  const url = variant && variant.url ? variant.url : it.url;
+  return /^https?:\/\//i.test(url || '') ? url : '';
+}
+function openCommentExternal(it, comment) {
+  const url = commentPlatformUrl(it, comment);
+  const text = comment && comment.text ? comment.text : '';
+  if (text) copyText(text);
+  if (!url) return toast(text ? '已复制评论文字（这条没有原文链接）' : '这条评论没有可打开的原文链接');
+  openExternal(url);
+  if (text) toast('已打开原文，评论文字已复制，站内搜索即可定位', 5000);
 }
 function openDetail(id) {
   const it = timelineItems().find(it => it.id === id && bucketOf(it) !== 'destroyed');
@@ -1598,7 +1668,7 @@ function updateStatus() {
 }
 function renderSyncSheet() {
   const body = $('#sync-detail'); if (!body) return;
-  const stats = pendingStats(true), policy = syncPolicy();
+  const stats = pendingStats(true), policy = syncPolicy(), readTier = policy.read || policy;
   const lines = [];
   lines.push(`<div><b>${esc(syncLabel())}</b> · 待同步 ${stats.ops} 个字段 / ${stats.posts} 个帖子 / ${stats.draftDays} 天筛选</div>`);
   lines.push(`<div>预计请求体：${(stats.requestBytes / 1024).toFixed(1)}KB（原始 ${(stats.bytes / 1024).toFixed(1)}KB）${stats.requestBytes >= SYNC.volumeWarnBytes ? '（较大，已自动拉长防抖）' : ''}</div>`);
@@ -1607,6 +1677,7 @@ function renderSyncSheet() {
   const unsynced = draftDates().map(date => `${date}${S.store.days[date]?.feed ? '' : '（缺少正文）'}`);
   if (unsynced.length) lines.push(`<div>待同步筛选：${esc(unsynced.join('、'))}</div>`);
   lines.push(`<div>同步策略：<select id="sync-policy">${Object.entries(SYNC_POLICIES).map(([key, p]) => `<option value="${key}"${key === (S.syncMeta.policy || DEFAULT_SYNC_POLICY) ? ' selected' : ''}>${esc(p.label)}（停手 ${p.debounce / 1000}s / 最长 ${p.maxWait / 1000}s）</option>`).join('')}</select></div>`);
+  lines.push(`<div>已读标记：停手 ${readTier.debounce / 1000}s / 最长 ${readTier.maxWait / 1000}s / 批次间隔 ${readTier.minGap / 1000}s${readOnlyPending() ? '（当前只有已读，按低频策略）' : ''}</div>`);
   if (S.offline) lines.push('<div>当前离线；改动已保存在本机，联网后自动补齐。</div>');
   if (S.storageError) lines.push('<div>本机暂存失败：请导出待同步记录并立即同步。</div>');
   if (S.syncMeta.error) lines.push(`<div>${esc(S.syncMeta.blocked === 'auth' ? '需要重新授权：' : '原因：')}${esc(S.syncMeta.error)}</div>`);
@@ -1659,7 +1730,17 @@ function timelineItems() {
   return items.sort((a, b) => postTime(b) - postTime(a) || b._date.localeCompare(a._date) || a.id.localeCompare(b.id));
 }
 function favoriteTargets() {
-  return Object.entries(S.reading.items).filter(([, row]) => row.favorite && !['water', 'destroyed'].includes(row.bucket)).map(([id]) => id);
+  // 一组同文会在服务端/本机给每个成员都写 favorite；统计时归回主帖，否则收藏视图会重复。
+  const primaryOf = new Map();
+  for (const it of allItems()) for (const id of groupIds(it)) primaryOf.set(id, it.id);
+  const out = [], seen = new Set();
+  for (const [id, row] of Object.entries(S.reading.items)) {
+    if (!row.favorite || ['water', 'destroyed'].includes(row.bucket)) continue;
+    const key = primaryOf.get(id) || id;
+    if (seen.has(key)) continue;
+    seen.add(key); out.push(key);
+  }
+  return out;
 }
 function unresolvedFavorites() {
   const found = new Set(timelineItems().map(it => it.id));
@@ -1694,7 +1775,7 @@ function paint(parts) {
 function visibleItem(it) {
   const bucket = bucketOf(it);
   if (bucket === 'destroyed') return false;
-  if (S.view === 'favorites' ? bucket !== 'good' || !readingItem(it.id).favorite : bucket !== S.view) return false;
+  if (S.view === 'favorites' ? bucket !== 'good' || !isFavorite(it) : bucket !== S.view) return false;
   return S.readFilter === 'all' || (S.readFilter === 'read' ? isRead(it.id) : !isRead(it.id) || S.heldRead.has(it.id));
 }
 function render() {
@@ -1710,7 +1791,7 @@ function render() {
     parts.push(card(openItem, true));
     const comments = visibleComments(openItem);
     parts.push(comments.length
-      ? `<section class="cmts"><div class="cmts-head">评论 · ${comments.length}</div>${comments.map(c => `<div class="cmt">${avatarTag(c.user, c.user)}<div class="cmt-body"><div class="cmt-name">${esc(c.user)}${c.author ? '（作者）' : ''}</div><div class="cmt-text">${esc(c.text)}</div></div><button class="cmt-more" data-comment-more="${esc(openItem.id)}" data-comment-key="${esc(commentKey(c))}" aria-label="评论操作">${icon('more')}</button></div>`).join('')}</section>`
+      ? `<section class="cmts"><div class="cmts-head">评论 · ${comments.length}</div>${comments.map(c => `<div class="cmt">${avatarTag(c.user, c.user)}<div class="cmt-body"><div class="cmt-name">${multiPlatform(openItem) && c.platform ? `<span class="plat">${esc(c.platform)}</span>` : ''}${esc(c.user)}${c.author ? '（作者）' : ''}</div><div class="cmt-text">${esc(c.text)}</div></div><button class="cmt-more" data-comment-more="${esc(openItem.id)}" data-comment-key="${esc(commentKey(c))}" aria-label="评论操作">${icon('more')}</button></div>`).join('')}</section>`
       : '<div class="empty">这条帖子没有评论</div>');
   } else if (S.view === 'favorites' && !S.favoriteAuthor) {
     const groups = new Map();
@@ -1758,7 +1839,7 @@ function restoreAfterPaint(anchor, anchorTop, y) {
 }
 function card(it, detail = false) {
   const id = esc(it.id);
-  const water = bucketOf(it) === 'water', favorite = !!readingItem(it.id).favorite, read = isRead(it.id);
+  const water = bucketOf(it) === 'water', favorite = isFavorite(it), read = isRead(it.id);
   const quotes = (it.quotes || []).map(x => `<div class="quote">${x.nick ? '@' + esc(x.nick) + '：' : ''}${esc(x.text)}</div>`).join('');
   const chain = it.chain ? `<blockquote>${esc(it.chain)}</blockquote>` : '';
   const comments = visibleComments(it);
@@ -1862,8 +1943,9 @@ document.addEventListener('visibilitychange', () => {
   persistLocal();
   for (const [el, rec] of ends) armEnd(el, rec); // 隐藏清零，重新可见重新计时。
   if (document.visibilityState === 'hidden') {
-    // 后台优先补一次；不承诺请求链在后台完整执行。
-    if (S.outbox.size) void requestSync('hidden', { background: true });
+    // 后台优先补一次决策类改动；不承诺请求链在后台完整执行。
+    // 只有已读在排队时不抢跑：手机切前后台极频繁，那会变成一批碎片提交。
+    if (S.outbox.size && !readOnlyPending()) void requestSync('hidden', { background: true });
   } else {
     void checkRelease(); void ensureShellWorker(true); resumeSync();
   }
@@ -2218,6 +2300,12 @@ $('#sheet').addEventListener('click', e => {
     if (comment) copyComment(comment);
     return;
   }
+  if (action === 'comment-open') {
+    const it = timelineItems().find(it => it.id === id);
+    const comment = it && visibleComments(it).find(c => commentKey(c) === key);
+    if (it && comment) openCommentExternal(it, comment);
+    return;
+  }
   if (action === 'comment-delete') { deleteComment(id, key); return; }
   applyAction(action, id);
 });
@@ -2225,8 +2313,8 @@ function applyAction(action, id) {
   if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
   const it = timelineItems().find(it => it.id === id); if (!it || bucketOf(it) === 'destroyed') return;
   if (action === 'favorite' && bucketOf(it) === 'good') {
-    S.undo = { id, field: 'favorite', value: !!readingItem(id).favorite };
-    changeReading(id, 'favorite', !readingItem(id).favorite);
+    S.undo = { id, field: 'favorite', value: isFavorite(it) };
+    changeReading(id, 'favorite', !isFavorite(it));
   } else if (action === 'bucket') {
     S.undo = { id, field: 'bucket', value: bucketOf(it) };
     changeReading(id, 'bucket', bucketOf(it) === 'water' ? 'good' : 'water');
@@ -2237,7 +2325,7 @@ function applyAction(action, id) {
   } else return;
   render();
   if (['favorite', 'bucket'].includes(action) && S.undo) {
-    toast(action === 'favorite' ? (readingItem(id).favorite ? '已收藏' : '已取消收藏') : (bucketOf(it) === 'water' ? '已移到水贴' : '已捞回干货'), 5000);
+    toast(action === 'favorite' ? (isFavorite(it) ? '已收藏' : '已取消收藏') : (bucketOf(it) === 'water' ? '已移到水贴' : '已捞回干货'), 5000);
     const button = document.createElement?.('button');
     if (button) {
       button.textContent = '撤销';
@@ -2252,7 +2340,9 @@ function applyAction(action, id) {
 }
 // 生命周期：本地先落地；退后台 / 离页 / 恢复网络只补一次同步，不承诺后台一定完成。
 window.addEventListener('pagehide', () => { persistLocal(); if (S.outbox.size) void requestSync('pagehide', { background: true, force: true }); });
-window.addEventListener('blur', () => { persistLocal(); if (S.outbox.size) void requestSync('blur', { force: true }); });
+// 失焦不再强制：手机上切 App / 键盘 / 锁屏都会 blur，force 会绕过防抖与批次间隔造碎片提交。
+// 改为 2 秒短防抖 + 尊重 minGap；真离开页面由 pagehide 兜底（那才用 force）。
+window.addEventListener('blur', () => { persistLocal(); if (S.outbox.size) scheduleSync(2000); });
 window.addEventListener('focus', () => resumeSync());
 window.addEventListener('pageshow', () => resumeSync());
 window.addEventListener('online', () => { S.offline = false; S.syncMeta.errorKind = ''; if (S.syncMeta.blocked) { updateStatus(); return; } scheduleSync(0); updateStatus(); });
