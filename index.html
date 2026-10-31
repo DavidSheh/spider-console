@@ -195,7 +195,7 @@ main{max-width:760px;margin:0 auto}
 <script>
 'use strict';
 /* 无后端、无依赖的私有仓阅读器。公开发布与 SW 仅含空壳；业务数据只存本机和私有仓。 */
-const BUILD_VERSION = 'dfb2df4fc97a9185';
+const BUILD_VERSION = '48da302c67520dda';
 const validBuildVersion = v => typeof v === 'string' && v.length === 16 && /^[0-9a-f]{16}$/.test(v);
 const CURRENT_VERSION = validBuildVersion(BUILD_VERSION) ? BUILD_VERSION : 'dev';
 const PROVIDERS = {
@@ -252,6 +252,8 @@ const S = {
   store: emptyStore(), readingDirty: false, dirty: false, busy: false, offline: false,
   view: 'good', readFilter: 'all', heldRead: new Set(), storageError: false,
   loadedDates: [], loading: false, loadError: '', loadPaused: false, scanEmpty: 0,
+  // 刷新信息流时要重拉的那几天（默认空；避免把「刷新」做成只重拉最新一天）
+  forceRefresh: new Set(),
   favoriteAuthor: '', positions: {}, filters: {}, cancelLoad: false, failedDate: '', undo: null, openId: '', sheetId: '', sheetComment: '',
   // 自动同步：outbox 是待上传的字段级操作，conflicts 是两端同字段分歧（保留双方，不静默丢弃）。
   outbox: new Map(), conflicts: new Map(), remote: emptyReading(), syncMeta: emptySyncMeta(),
@@ -1975,12 +1977,17 @@ function validateFeed(feed, date) {
 async function fetchDay(date, refresh = false) {
   const cached = S.store.days[date] || { feed: null, picks: '', pending: {} };
   S.store.days[date] = cached;
-  if (!refresh && cached.feed) return cached;
+  // forceRefresh 里的日期也算「过期」：刷新信息流要能拉回桌面重渲染后的正文，
+  // 否则旧日期永远吃本机缓存（2026-10-31 实测：跨平台同文合并后手机仍是两条旧卡片）。
+  const stale = refresh || (S.forceRefresh && S.forceRefresh.has(date));
+  if (!stale && cached.feed) return cached;
   let error = '';
   try {
     const text = fileText(await apiGet(`daily/${date}/feed.json`), `daily/${date}/feed.json`);
     if (text == null) throw new Error(`${date} 正文尚未推送`);
     cached.feed = validateFeed(JSON.parse(text), date);
+    // 这一天的过期标记到此为止；之后滑到它时再读缓存即可。
+    if (S.forceRefresh) S.forceRefresh.delete(date);
   } catch (e) { error = e.message; S.offline = true; }
   try {
     const text = fileText(await apiGet(`daily/${date}/picks.md`), `daily/${date}/picks.md`);
@@ -2215,9 +2222,10 @@ $('#dates').onchange = e => {
   if (window.scrollTo) window.scrollTo(0, 0);
   void loadDay(e.target.value);
 };
-$('#refresh').onclick = async () => {
-  closeMenu();
-  void checkRelease(); void ensureShellWorker(true);
+/* 刷新信息流：把屏幕上已加载的每一「天」都当过期重拉。
+   以前只重拉最新一天（S.dates[0]），更早的日期永远吃本机缓存——桌面重渲染后
+   手机上看不到任何变化。拉失败时保留旧正文（fetchDay 只在成功后替换 feed）。 */
+async function refreshFeed() {
   if (S.busy || S.loading) return toast('正在处理，请稍候或暂停加载');
   preserveDraft();
   try { await loadDates(); } catch (e) { return toast('日期列表刷新失败：' + e.message, 5000); }
@@ -2229,9 +2237,13 @@ $('#refresh').onclick = async () => {
       // 刷新收藏会重新查找缓存以外的日期；保留离线正文及作者位置。
     } catch (e) { S.offline = true; toast('刷新失败，保留本机收藏：' + e.message, 5000); }
     finally { S.busy = false; }
-    await switchView('favorites');
-  } else await loadDay(S.dates[0] || S.date);
-};
+    return switchView('favorites');
+  }
+  // 已加载的这几天全部标记过期；每次拉成功后就从集合里去掉（滑到旧日期时按需重拉）。
+  S.forceRefresh = new Set(S.loadedDates);
+  await loadDay(S.dates[0] || S.date);
+}
+$('#refresh').onclick = () => { closeMenu(); void checkRelease(); void ensureShellWorker(true); return refreshFeed(); };
 $('#update-shell').onclick = () => { closeMenu(); return refreshToNewVersion(); };
 $('#login-update-shell').onclick = refreshToNewVersion;
 const stateButton = $('#state'); if (stateButton) stateButton.onclick = () => openSyncSheet();
